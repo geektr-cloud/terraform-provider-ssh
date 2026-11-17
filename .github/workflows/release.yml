@@ -11,6 +11,9 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -24,8 +27,8 @@ jobs:
         uses: crazy-max/ghaction-import-gpg@v7
         id: import_gpg
         with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          gpg_private_key: ${{ secrets.OPENTOFU_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.OPENTOFU_GPG_PRIVATE_KEY_PASSPHRASE }}
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -34,3 +37,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          GPG_PASSPHRASE: ${{ secrets.OPENTOFU_GPG_PRIVATE_KEY_PASSPHRASE }}

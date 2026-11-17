@@ -38,25 +38,36 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
 signs:
   - artifacts: checksum
     cmd: gpg
+    signature: "${artifact}.sig"
+    stdin: "{{ .Env.GPG_PASSPHRASE }}"
     args:
-      - --batch
-      - --yes
-      - --armor
-      - --detach-sign
-      - --local-user
+      - "--batch"
+      - "--yes"
+      - "--pinentry-mode"
+      - "loopback"
+      - "--passphrase-fd"
+      - "0"
+      - "--local-user"
       - "{{ .Env.GPG_FINGERPRINT }}"
-      - --output
+      - "--output"
       - "${signature}"
+      - "--detach-sign"
       - "${artifact}"
 
 release:
   draft: false
   prerelease: auto
   mode: replace
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
 changelog:
   sort: asc
