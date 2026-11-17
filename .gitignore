@@ -1,0 +1,11 @@
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+crash.log
+dist/
+bin/
+coverage.out
+coverage.html
+.tools/

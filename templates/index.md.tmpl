@@ -1,0 +1,52 @@
+---
+page_title: "{{.ProviderShortName}} Provider"
+subcategory: ""
+description: |-
+  The SSH provider manages remote files and directories and reads files or runs commands over SSH.
+---
+
+# SSH Provider
+
+The SSH provider manages remote files and directories, and performs one-shot file reads and command execution. It targets Linux hosts with GNU coreutils `install`, `timeout`, and `mktemp` available.
+
+Use `data.ssh_conn` to validate connection settings and obtain a sensitive Connection Profile, then pass that profile to `ssh_resource`, `data.ssh_data`, or `ephemeral.ssh_data`.
+
+-> The provider requires Terraform or OpenTofu 1.11 or later because `ssh_resource.file.content_wo` uses write-only attributes.
+
+## Example Usage
+
+```hcl
+terraform {
+  required_providers {
+    ssh = {
+      source = "geektr-cloud/ssh"
+    }
+  }
+}
+
+data "ssh_conn" "server" {
+  host        = "example.internal"
+  port        = "22"
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
+  known_hosts = "~/.ssh/known_hosts"
+}
+
+resource "ssh_resource" "config" {
+  conn = data.ssh_conn.server.conn
+
+  directory {
+    path = "/etc/myapp"
+    mode = "0755"
+  }
+
+  file {
+    path    = "/etc/myapp/config.yaml"
+    content = "listen: 0.0.0.0:8080\n"
+    mode    = "0644"
+  }
+}
+```
+
+!> `data.ssh_conn.conn` is sensitive, but Sensitive only redacts display. The private key and the complete Connection Profile are persisted in Terraform plan and state. Use encrypted remote state and restrict access accordingly.
+{{ .SchemaMarkdown }}

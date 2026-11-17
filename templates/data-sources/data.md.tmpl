@@ -1,0 +1,44 @@
+---
+page_title: "ssh_data Data Source - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Reads remote files and executes commands or scripts over SSH.
+---
+
+# ssh_data (Data Source)
+
+Reads remote files and executes commands or scripts over SSH. Each read establishes a fresh SSH connection and closes it when the operation finishes.
+
+Results are partitioned by the operation's `sensitive` flag. Normal results are stored in `values`; sensitive results are stored in `sensitive_values`. Sensitive controls display only: an ordinary data source persists both maps in state.
+
+- `file` reads a regular file (following a symlink to a regular file) and requires valid UTF-8. Directories and special files are rejected.
+- `command` runs a non-empty argv. The provider shell-quotes each argument; shell operators inside an argument are not interpreted.
+- `run` feeds the script body to the configured interpreter over stdin (`<shell> -s`), so no script file is written and the script does not appear in the remote process argv.
+- All operations validate before any remote action. They run in ascending `index` order. Same-index operations have a deterministic provider order. The first failure aborts the remaining operations and returns no partial maps.
+
+The per-item output limit is 512 KiB by default. It can be changed only through the `SSH_PROVIDER_MAX_OUTPUT_SIZE` environment variable (bytes, positive integer). There is no HCL argument and no unlimited mode.
+
+## Example Usage
+
+```hcl
+data "ssh_data" "inspect" {
+  conn = data.ssh_conn.server.conn
+
+  file {
+    key  = "config"
+    path = "/etc/myapp/config.yaml"
+  }
+
+  command {
+    key     = "kernel"
+    command = ["uname", "-r"]
+  }
+
+  run {
+    key    = "services"
+    script = "systemctl list-units --type=service --no-legend\n"
+    envs   = { LANG = "C" }
+  }
+}
+```
+{{ .SchemaMarkdown | trimspace }}
