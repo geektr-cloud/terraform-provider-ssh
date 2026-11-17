@@ -10,7 +10,8 @@ Provider address: `geektr-cloud/ssh`
 | --- | --- |
 | `data.ssh_conn` | Probe a connection and return a sensitive, persistable Connection Profile |
 | `resource.ssh_resource` | Manage independent remote files and directories |
-| `data.ssh_data` | Read files, run commands or scripts, persist results |
+| `data.ssh_data` | Read files, run commands or scripts, persist ordinary results |
+| `data.ssh_sensitive_data` | Same operation model with all results marked sensitive; still persisted |
 | `ephemeral.ssh_data` | Same operation model, no persistence of results or profile |
 
 No provider function, connection pool, process-global map, or external daemon is implemented. Every Terraform lifecycle operation opens its own SSH connection and closes it afterwards.
@@ -87,15 +88,16 @@ Encrypted private keys are supported through the `SSH_PROVIDER_PRIVATE_KEY_PASSP
 | Value | Display | Plan/state |
 | --- | --- | --- |
 | `data.ssh_conn.private_key`, `data.ssh_conn.conn` | Sensitive | Persisted, contains private key |
-| `ssh_resource.conn`, `data.ssh_data.conn` | Sensitive | Persisted, contains private key |
+| `ssh_resource.conn`, `data.ssh_data.conn`, `data.ssh_sensitive_data.conn` | Sensitive | Persisted, contains private key |
 | `ephemeral.ssh_data.conn` and results | Ephemeral | Not persisted |
 | `data.ssh_data.values` | Normal | Persisted |
-| `data.ssh_data.sensitive_values` | Sensitive | Persisted |
+| `data.ssh_sensitive_data.values` | Sensitive | Persisted |
+| `ephemeral.ssh_data.values` | Sensitive | Not persisted |
 | `file.content` | Normal | Persisted |
 | `file.content_wo` | Write-only | Plaintext not persisted |
 | `file.content_sha256` | Normal computed | Persisted digest |
 
-**Sensitive is not encryption.** It only redacts CLI display. Plan files and state still contain the private key and ordinary data-source results. Use encrypted remote state, restricted access, and short-lived keys.
+**Sensitive is not encryption.** It only redacts CLI display. Plan files and state still contain the private key, `data.ssh_sensitive_data.values`, and ordinary data-source results. Use encrypted remote state, restricted access, and short-lived keys.
 
 `content_wo` is never written to plan or state. Only its SHA-256 digest is persisted as `content_sha256`. The digest is a content identity, not a secret: low-entropy values can be guessed offline. `content_wo` must be stable between plan and apply. Literals, ordinary variables, and stable ephemeral variables work. Ephemeral resources that change on every phase are not supported.
 
@@ -154,7 +156,7 @@ Ownership and content:
 
 When a normal operation fails with a permission error, the resource retries the same operation with `sudo -n`. Other errors do not trigger escalation. All sudo use is non-interactive.
 
-## `data.ssh_data` and `ephemeral.ssh_data`
+## `data.ssh_data`, `data.ssh_sensitive_data`, and `ephemeral.ssh_data`
 
 ```hcl
 data "ssh_data" "inspect" {
@@ -163,9 +165,8 @@ data "ssh_data" "inspect" {
   timeout = "5m"
 
   file {
-    key       = "config"
-    path      = "/etc/app/config"
-    sensitive = true
+    key  = "config"
+    path = "/etc/app/config"
   }
 
   command {
@@ -179,21 +180,57 @@ data "ssh_data" "inspect" {
     shell  = "sh"
     envs   = { LANG = "C" }
   }
+
+  file {
+    key  = "raw"
+    path = "/etc/app/raw.txt"
+    trim = false # preserve exact leading and trailing whitespace
+  }
+}
+
+data "ssh_sensitive_data" "credential" {
+  conn = data.ssh_conn.server.conn
+
+  file {
+    key  = "token"
+    path = "/run/secrets/api-token"
+  }
 }
 ```
 
+All three surfaces use the same connection, sudo, timeout, and operation model. They differ only in where results go and how diagnostics are reported:
+
+| Surface | Result map | Persisted | Diagnostics |
+| --- | --- | --- | --- |
+| `data.ssh_data` | `values`, ordinary | Yes | Bounded remote stderr included |
+| `data.ssh_sensitive_data` | `values`, Sensitive | Yes | Remote stderr suppressed |
+| `ephemeral.ssh_data` | `values`, Sensitive | No | Remote stderr suppressed |
+
 - Keys are required and globally unique across all operations. `index` defaults to 0 and must be non-negative.
-- Operations run by ascending index. Same-index operations use a deterministic provider order. First failure aborts the whole operation and returns no partial maps.
+- Operations run by ascending index. Same-index operations use a deterministic provider order. First failure aborts the whole operation and returns no partial map.
 - `command` is a non-empty argv. Arguments are shell-quoted one by one; shell operators inside an argument are not interpreted.
 - `run` feeds the script body to the configured interpreter over stdin (`<shell> -s`), so no script file is written to the remote filesystem and the script does not appear in the remote process argv.
 - `command` uses `conn.envs`; `run` merges `conn.envs` with block `envs` (block wins). File reads do not use envs.
-- Sudo is explicit for `ssh_data`: set it on the resource or per operation. It never escalates implicitly.
+- Sudo is explicit: set it on the data source or per operation. It never escalates implicitly.
 - File contents and stdout must be valid UTF-8. Trailing newlines are preserved.
-- Results go to `values` or `sensitive_values` according to `sensitive`. Empty result sets are empty maps, not null.
+- Every operation writes to `values`. There is no block-level `sensitive` argument and no `sensitive_values` map. Empty result sets are empty maps, not null.
+- Every `file`, `command`, and `run` block accepts `trim`, which defaults to `true`. Results are validated as UTF-8 first, then `strings.TrimSpace` removes leading and trailing Unicode whitespace. Set `trim = false` to preserve exact output, including trailing newlines. A whitespace-only result becomes an empty string. `trim` does not change the raw-output size limit.
 - Per-item output is capped at 512 KiB (524288 bytes). The same cap applies to ordinary `ssh_resource.file.content` writes and reads; a larger value fails apply or refresh. Set `SSH_PROVIDER_MAX_OUTPUT_SIZE` to a positive byte count to change it. There is no HCL option and no unlimited mode. Write-only content is not subject to this cap, and its digest is computed as a stream.
-- Sensitive operations suppress remote stderr in diagnostics.
+
+`data.ssh_sensitive_data` marks the whole `values` map Sensitive for CLI display. It is still an ordinary data source: results are written to plan and state. Sensitive is not encryption. Put operations with sensitive results here instead of `data.ssh_data`.
 
 `ephemeral.ssh_data` has the same operation model. Its results and profile are not stored in plan or state. It is suitable for write-only inputs such as `content_wo`.
+
+### Migration from block-level sensitivity
+
+Earlier versions accepted `sensitive = true` inside `file`, `command`, and `run` blocks and returned sensitive results in a `sensitive_values` map. Both were removed:
+
+1. Move configurations that produced sensitive results from `data.ssh_data` to `data.ssh_sensitive_data`.
+2. Remove every block-level `sensitive` argument. For `ephemeral.ssh_data`, remove it as well; every result is sensitive there.
+3. Replace `.sensitive_values["key"]` with `.values["key"]`.
+4. Refresh state. Data source and ephemeral resource schemas cannot be versioned, so there is no automatic state upgrade.
+
+`trim` defaults to `true` and removes leading and trailing whitespace. Configurations that relied on exact output, especially a trailing newline, must set `trim = false` explicitly. This default applies retroactively to existing configurations.
 
 ## Output limit
 

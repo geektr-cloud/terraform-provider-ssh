@@ -13,8 +13,12 @@ references this directory.
 - `data.ssh_conn` connection probe.
 - `ssh_resource` managed directory, ordinary `content` file, and write-only
   `content_wo` file whose value comes from `ephemeral.ssh_data`.
-- `data.ssh_data` file read, `command` argv, `run` script over stdin, and
-  `sensitive_values`.
+- `data.ssh_data` file read, `command` argv, and `run` script over stdin.
+  Includes default `trim` behavior and a `trim = false` command with an exact
+  trailing-newline assertion.
+- `data.ssh_sensitive_data` file and command operations with a sensitive
+  `values` map, including default trimming.
+- `ephemeral.ssh_data` default trimming feeds a write-only file.
 - A managed path under `/root` while connecting as the non-root `e2e` user, so
   parent creation, writes, chmod, chown, refreshes, and removals exercise
   `sudo -n`.

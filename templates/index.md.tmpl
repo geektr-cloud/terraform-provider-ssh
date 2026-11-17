@@ -9,7 +9,7 @@ description: |-
 
 The SSH provider manages remote files and directories, and performs one-shot file reads and command execution. It targets Linux hosts with GNU coreutils `install`, `timeout`, and `mktemp` available.
 
-Use `data.ssh_conn` to validate connection settings and obtain a sensitive Connection Profile, then pass that profile to `ssh_resource`, `data.ssh_data`, or `ephemeral.ssh_data`.
+Use `data.ssh_conn` to validate connection settings and obtain a sensitive Connection Profile, then pass that profile to `ssh_resource`, `data.ssh_data`, `data.ssh_sensitive_data`, or `ephemeral.ssh_data`.
 
 -> The provider requires Terraform or OpenTofu 1.11 or later because `ssh_resource.file.content_wo` uses write-only attributes.
 

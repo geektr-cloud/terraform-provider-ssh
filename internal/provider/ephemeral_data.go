@@ -59,50 +59,45 @@ func (e *sshDataEphemeralResource) Schema(_ context.Context, _ ephemeral.SchemaR
 			"timeout": schema.StringAttribute{Optional: true, Description: "Default per-operation timeout. Defaults to 5m."},
 			"values": schema.MapAttribute{
 				Computed:    true,
-				ElementType: types.StringType,
-				Description: "Non-sensitive results keyed by operation key.",
-			},
-			"sensitive_values": schema.MapAttribute{
-				Computed:    true,
 				Sensitive:   true,
 				ElementType: types.StringType,
-				Description: "Sensitive results keyed by operation key.",
+				Description: "Results keyed by operation key. Marked sensitive for display; ephemeral results are never persisted.",
 			},
 		},
 		Blocks: map[string]schema.Block{
 			"file": schema.ListNestedBlock{
 				Description: "Read a remote file.",
 				NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
-					"key":       schema.StringAttribute{Required: true, Description: "Globally unique result key."},
-					"path":      schema.StringAttribute{Required: true, Description: "Absolute remote file path."},
-					"index":     schema.Int64Attribute{Optional: true, Description: "Execution order."},
-					"sensitive": schema.BoolAttribute{Optional: true, Description: "Store in sensitive_values."},
-					"sudo":      schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
-					"timeout":   schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
+					"key":     schema.StringAttribute{Required: true, Description: "Globally unique result key."},
+					"path":    schema.StringAttribute{Required: true, Description: "Absolute remote file path."},
+					"index":   schema.Int64Attribute{Optional: true, Description: "Execution order."},
+					"trim":    schema.BoolAttribute{Optional: true, Computed: true, Description: "Trim leading and trailing Unicode whitespace from the result. Defaults to true. Set to false to preserve the exact output, including trailing newlines."},
+					"sudo":    schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
+					"timeout": schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
 				}},
 			},
 			"command": schema.ListNestedBlock{
 				Description: "Run a remote argv command.",
 				NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
-					"key":       schema.StringAttribute{Required: true, Description: "Globally unique result key."},
-					"command":   schema.ListAttribute{Required: true, ElementType: types.StringType, Description: "Non-empty argv."},
-					"index":     schema.Int64Attribute{Optional: true, Description: "Execution order."},
-					"sensitive": schema.BoolAttribute{Optional: true, Description: "Store in sensitive_values."},
-					"sudo":      schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
-					"timeout":   schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
+					"key":     schema.StringAttribute{Required: true, Description: "Globally unique result key."},
+					"command": schema.ListAttribute{Required: true, ElementType: types.StringType, Description: "Non-empty argv."},
+					"index":   schema.Int64Attribute{Optional: true, Description: "Execution order."},
+					"trim":    schema.BoolAttribute{Optional: true, Computed: true, Description: "Trim leading and trailing Unicode whitespace from the result. Defaults to true. Set to false to preserve the exact output, including trailing newlines."},
+					"sudo":    schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
+					"timeout": schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
 				}},
 			},
 			"run": schema.ListNestedBlock{
 				Description: "Execute a script through the configured shell, fed over stdin.",
 				NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
-					"key":       schema.StringAttribute{Required: true, Description: "Globally unique result key."},
-					"script":    schema.StringAttribute{Required: true, Description: "Script body."},
-					"shell":     schema.StringAttribute{Optional: true, Description: "Shell interpreter. Defaults to sh."},
-					"envs":      schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Environment overrides."},
-					"index":     schema.Int64Attribute{Optional: true, Description: "Execution order."},
-					"sensitive": schema.BoolAttribute{Optional: true, Description: "Store in sensitive_values."},
-					"sudo":      schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
-					"timeout":   schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
+					"key":     schema.StringAttribute{Required: true, Description: "Globally unique result key."},
+					"script":  schema.StringAttribute{Required: true, Description: "Script body."},
+					"shell":   schema.StringAttribute{Optional: true, Description: "Shell interpreter. Defaults to sh."},
+					"envs":    schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Environment overrides."},
+					"index":   schema.Int64Attribute{Optional: true, Description: "Execution order."},
+					"trim":    schema.BoolAttribute{Optional: true, Computed: true, Description: "Trim leading and trailing Unicode whitespace from the result. Defaults to true. Set to false to preserve the exact output, including trailing newlines."},
+					"sudo":    schema.BoolAttribute{Optional: true, Description: "Override top-level sudo."},
+					"timeout": schema.StringAttribute{Optional: true, Description: "Per-operation timeout."},
 				}},
 			},
 		},
@@ -115,14 +110,16 @@ func (e *sshDataEphemeralResource) Open(ctx context.Context, req ephemeral.OpenR
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	values, sensitive, diags := model.Execute(ctx)
+	values, diags := model.Execute(ctx, true)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	resp.Diagnostics.Append(model.ApplyTrimDefaults()...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	model.Values, diags = ValuesMap(values)
-	resp.Diagnostics.Append(diags...)
-	model.SensitiveValues, diags = ValuesMap(sensitive)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

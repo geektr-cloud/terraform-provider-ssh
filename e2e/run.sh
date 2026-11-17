@@ -352,6 +352,23 @@ assert_output() {
     [ "$got" = "$want" ] || fail "output $key mismatch"
 }
 
+# Compare exact bytes, including trailing newlines that command substitution
+# would strip.
+assert_output_exact() {
+    dir=$1
+    key=$2
+    want=$3
+    got="$tmp/output-$key.raw"
+    expected="$tmp/output-$key.want"
+    if ! (cd "$dir" && "$current_bin" output -raw "$key") >"$got" 2>/dev/null; then
+        fail "terraform output $key failed"
+    fi
+    printf '%s' "$want" >"$expected"
+    if ! cmp -s "$got" "$expected"; then
+        fail "output $key exact mismatch"
+    fi
+}
+
 plan_expect() {
     expected=$1
     log=$2
@@ -421,7 +438,8 @@ run_basic() {
 
     remote_install_dir "$root_base" 0755 root:root
     create_remote_file "$seed_file" "$seed_token" 0644 root:root
-    create_remote_file "$secret_file" "$current_wo_token" 0600 root:root
+    secret_source=$(printf '  %s  \n' "$current_wo_token")
+    create_remote_file "$secret_file" "$secret_source" 0600 root:root
 
     var_file="$work/e2e.tfvars"
     write_basic_tfvars "$var_file" "$root_base" "$public_base" "$seed_file" "$secret_file" "$run_token"
@@ -451,7 +469,10 @@ run_basic() {
     assert_output "$work" seed_value "$seed_token"
     assert_output "$work" uname_value "Linux"
     assert_output "$work" run_value "$run_token"
+    assert_output "$work" padded_value "padded"
+    assert_output_exact "$work" keep_newline_value $'keep-newline\n'
     assert_output "$work" sensitive_seed_value "$seed_token"
+    assert_output "$work" sensitive_padded_value "secret-padded"
     assert_output "$work" wo_digest "$digest"
 
     scan_state_for_writeonly "$work" "$current_wo_token"

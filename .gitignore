@@ -9,3 +9,4 @@ bin/
 coverage.out
 coverage.html
 .tools/
+/terraform-provider-ssh

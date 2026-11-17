@@ -33,11 +33,19 @@ _Avoid_: metadata-only file, dual content source
 ### Results and execution
 
 **Result Set**:
-一次 `ssh_data` 求值产生的 keyed UTF-8 文本集合；普通结果与 Sensitive Result 分属 `values` 和 `sensitive_values`，key 在全部操作中唯一。
-_Avoid_: dynamically sensitive map elements, trimmed output
+一次 data 或 ephemeral `ssh_data` 求值产生的 keyed UTF-8 文本集合；所有结果统一写入 `values`，key 在全部操作中唯一。
+_Avoid_: dynamically sensitive map elements, trimmed output, partitioned result maps
+
+**Result Trimming**:
+对每个 file/command/run 结果在 UTF-8 校验后应用的默认前后空白去除；`trim = true` 为默认值，`trim = false` 保留精确输出与结尾换行。
+_Avoid_: byte normalization, newline stripping by default
+
+**Sensitive Data Source**:
+操作模型与 `data.ssh_data` 相同，但整个 `values` 静态 Sensitive 且所有操作抑制远端 stderr 的普通 data source；Sensitive 只是显示保护，结果仍会持久化。
+_Avoid_: encrypted data source, ephemeral data source
 
 **Sensitive Result**:
-只应出现在 `sensitive_values` 的结果；Sensitive 控制显示，普通 data source 仍会持久化它，只有 ephemeral surface 不持久化。
+由 `data.ssh_sensitive_data` 或 `ephemeral.ssh_data` 产生的结果；Sensitive 控制显示，普通 data source 仍会持久化它，只有 ephemeral surface 不持久化。
 _Avoid_: encrypted state value, individually sensitive map element
 
 **Secret Content Digest**:

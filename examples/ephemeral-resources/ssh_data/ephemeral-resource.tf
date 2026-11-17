@@ -9,8 +9,7 @@ ephemeral "ssh_data" "secret" {
   conn = data.ssh_conn.server.conn
 
   file {
-    key       = "token"
-    path      = "/run/secrets/token"
-    sensitive = true
+    key  = "token"
+    path = "/run/secrets/token"
   }
 }

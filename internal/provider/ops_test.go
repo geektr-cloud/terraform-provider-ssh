@@ -88,16 +88,18 @@ func TestOpsValidationRejectsDuplicateKeys(t *testing.T) {
 	files := types.ListValueMust(fileType, []attr.Value{
 		types.ObjectValueMust(fileOperationAttrTypes(), map[string]attr.Value{
 			"key": types.StringValue("dup"), "path": types.StringValue("/tmp/a"),
-			"index": types.Int64Value(0), "sensitive": types.BoolValue(false),
-			"sudo": types.BoolValue(false), "timeout": types.StringNull(),
+			"index": types.Int64Value(0),
+			"trim":  types.BoolNull(),
+			"sudo":  types.BoolValue(false), "timeout": types.StringNull(),
 		}),
 	})
 	commands := types.ListValueMust(cmdType, []attr.Value{
 		types.ObjectValueMust(commandOperationAttrTypes(), map[string]attr.Value{
 			"key":     types.StringValue("dup"),
 			"command": types.ListValueMust(types.StringType, []attr.Value{types.StringValue("true")}),
-			"index":   types.Int64Value(0), "sensitive": types.BoolValue(false),
-			"sudo": types.BoolValue(false), "timeout": types.StringNull(),
+			"index":   types.Int64Value(0),
+			"trim":    types.BoolNull(),
+			"sudo":    types.BoolValue(false), "timeout": types.StringNull(),
 		}),
 	})
 	model := OpsModel{
@@ -121,8 +123,9 @@ func TestOpsValidationRejectsEmptyCommand(t *testing.T) {
 		types.ObjectValueMust(commandOperationAttrTypes(), map[string]attr.Value{
 			"key":     types.StringValue("k"),
 			"command": types.ListValueMust(types.StringType, []attr.Value{}),
-			"index":   types.Int64Value(0), "sensitive": types.BoolValue(false),
-			"sudo": types.BoolValue(false), "timeout": types.StringNull(),
+			"index":   types.Int64Value(0),
+			"trim":    types.BoolNull(),
+			"sudo":    types.BoolValue(false), "timeout": types.StringNull(),
 		}),
 	})
 	model := OpsModel{

@@ -17,4 +17,10 @@ data "ssh_data" "inspect" {
     key     = "kernel"
     command = ["uname", "-r"]
   }
+
+  file {
+    key  = "raw"
+    path = "/etc/app/raw.txt"
+    trim = false # preserve exact bytes, including trailing newlines
+  }
 }

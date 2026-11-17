@@ -50,14 +50,14 @@ func TestOpsRunScript(t *testing.T) {
 	server := testsupport.Start(t)
 	host, port, _ := net.SplitHostPort(server.Addr)
 	runObj := types.ObjectValueMust(runOperationAttrTypes(), map[string]attr.Value{
-		"key":       types.StringValue("run"),
-		"script":    types.StringValue("printf 'run data'"),
-		"shell":     types.StringValue("sh"),
-		"envs":      types.MapNull(types.StringType),
-		"index":     types.Int64Value(0),
-		"sensitive": types.BoolValue(false),
-		"sudo":      types.BoolValue(false),
-		"timeout":   types.StringNull(),
+		"key":     types.StringValue("run"),
+		"script":  types.StringValue("printf 'run data'"),
+		"shell":   types.StringValue("sh"),
+		"envs":    types.MapNull(types.StringType),
+		"index":   types.Int64Value(0),
+		"trim":    types.BoolNull(),
+		"sudo":    types.BoolValue(false),
+		"timeout": types.StringNull(),
 	})
 	model := OpsModel{
 		Conn: &ConnectionModel{
@@ -86,11 +86,11 @@ func TestOpsRunScript(t *testing.T) {
 	if runs[0].Script.ValueString() != "printf 'run data'" {
 		t.Fatalf("decoded script = %q", runs[0].Script.ValueString())
 	}
-	values, sensitive, diags := model.Execute(context.Background())
+	values, diags := model.Execute(context.Background(), false)
 	if diags.HasError() {
 		t.Fatalf("diags: %v", diags)
 	}
 	if values["run"] != "run data" {
-		t.Fatalf("values = %#v, sensitive = %#v", values, sensitive)
+		t.Fatalf("values = %#v", values)
 	}
 }

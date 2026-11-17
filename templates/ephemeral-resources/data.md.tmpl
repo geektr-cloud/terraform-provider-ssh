@@ -9,6 +9,10 @@ description: |-
 
 Reads remote files and executes commands or scripts over SSH using the same operation model as `data.ssh_data`. Ephemeral results and the Connection Profile are not persisted in the plan or state.
 
+Every operation writes its result to `values`. The `values` map is statically marked Sensitive for display, so CLI output redacts it. There is no per-operation `sensitive` argument and no `sensitive_values` map. All operations suppress remote stderr and error details in diagnostics.
+
+Every `file`, `command`, and `run` block accepts `trim`, which defaults to `true`. After UTF-8 validation, `strings.TrimSpace` removes leading and trailing Unicode whitespace. Set `trim = false` to preserve exact output, including trailing newlines.
+
 Use this surface for values that must not be written to Terraform state. It can feed write-only arguments such as `ssh_resource.file.content_wo`.
 
 ~> A write-only argument still accepts only values that are stable between plan and apply. Ephemeral resources that change on every phase are not supported for `content_wo`.
@@ -20,9 +24,8 @@ ephemeral "ssh_data" "secret" {
   conn = data.ssh_conn.server.conn
 
   file {
-    key       = "token"
-    path      = "/run/secrets/token"
-    sensitive = true
+    key  = "token"
+    path = "/run/secrets/token"
   }
 }
 
@@ -31,9 +34,13 @@ resource "ssh_resource" "token_copy" {
 
   file {
     path       = "/etc/myapp/token"
-    content_wo = ephemeral.ssh_data.secret.sensitive_values["token"]
+    content_wo = ephemeral.ssh_data.secret.values["token"]
     mode       = "0600"
   }
 }
 ```
+
+## Migration from block-level sensitivity
+
+Earlier versions accepted `sensitive = true` inside `file`, `command`, and `run` blocks and returned sensitive results in `sensitive_values`. Remove the argument and read `.values["key"]` instead. Every result is sensitive for display in this ephemeral resource, and results remain absent from state. `trim` now defaults to `true`; set `trim = false` where exact leading or trailing whitespace is required. Ephemeral resource schemas cannot be versioned, so there is no automatic state migration.
 {{ .SchemaMarkdown | trimspace }}

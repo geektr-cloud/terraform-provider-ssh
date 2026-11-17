@@ -26,9 +26,8 @@ func TestAccEphemeralWriteOnly(t *testing.T) {
 ephemeral "ssh_data" "secret" {
   conn = data.ssh_conn.test.conn
   command {
-    key       = "secret"
-    command   = ["printf", "%%s", "ephemeral-secret"]
-    sensitive = true
+    key     = "secret"
+    command = ["printf", "%%s", "  ephemeral-secret  "]
   }
 }
 
@@ -36,7 +35,7 @@ resource "ssh_resource" "test" {
   conn = data.ssh_conn.test.conn
   file {
     path       = %q
-    content_wo = ephemeral.ssh_data.secret.sensitive_values["secret"]
+    content_wo = ephemeral.ssh_data.secret.values["secret"]
     mode       = "0600"
   }
 }

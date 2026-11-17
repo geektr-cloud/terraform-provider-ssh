@@ -66,10 +66,9 @@ ephemeral "ssh_data" "writeonly" {
   conn = data.ssh_conn.target.conn
 
   file {
-    key       = "secret"
-    path      = var.secret_file
-    sudo      = true
-    sensitive = true
+    key  = "secret"
+    path = var.secret_file
+    sudo = true
   }
 }
 
@@ -98,11 +97,35 @@ data "ssh_data" "inspect" {
   }
 
   command {
-    key       = "sensitive_seed"
-    command   = ["cat", var.seed_file]
-    sudo      = true
-    sensitive = true
-    index     = 3
+    key     = "padded"
+    command = ["printf", "  padded  "]
+    index   = 4
+  }
+
+  command {
+    key     = "keep_newline"
+    command = ["printf", "keep-newline\n"]
+    trim    = false
+    index   = 5
+  }
+}
+
+# Results from this surface are marked sensitive and their error details
+# suppress remote stderr. The data source still persists the results in state.
+data "ssh_sensitive_data" "inspect_secret" {
+  conn = data.ssh_conn.target.conn
+
+  command {
+    key     = "sensitive_seed"
+    command = ["cat", var.seed_file]
+    sudo    = true
+    index   = 3
+  }
+
+  command {
+    key     = "sensitive_padded"
+    command = ["printf", "  secret-padded  "]
+    index   = 4
   }
 }
 
@@ -125,7 +148,7 @@ resource "ssh_resource" "root_paths" {
 
   file {
     path       = "${var.root_base}/dir/secret.txt"
-    content_wo = ephemeral.ssh_data.writeonly.sensitive_values["secret"]
+    content_wo = ephemeral.ssh_data.writeonly.values["secret"]
     mode       = "0600"
   }
 }
@@ -162,8 +185,21 @@ output "run_value" {
   value = data.ssh_data.inspect.values["run"]
 }
 
+output "padded_value" {
+  value = data.ssh_data.inspect.values["padded"]
+}
+
+output "keep_newline_value" {
+  value = data.ssh_data.inspect.values["keep_newline"]
+}
+
 output "sensitive_seed_value" {
-  value     = data.ssh_data.inspect.sensitive_values["sensitive_seed"]
+  value     = data.ssh_sensitive_data.inspect_secret.values["sensitive_seed"]
+  sensitive = true
+}
+
+output "sensitive_padded_value" {
+  value     = data.ssh_sensitive_data.inspect_secret.values["sensitive_padded"]
   sensitive = true
 }
 

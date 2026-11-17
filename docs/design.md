@@ -8,7 +8,7 @@
 - 首版支持 Terraform >= 1.11 与 OpenTofu >= 1.11；分别测试最低支持版本的最新 patch 和当前稳定版。
 - 使用 Plugin Framework v1.19.0、protocol 6、Go 1.26。
 - 远端仅支持带 GNU coreutils `install`、`timeout`、`mktemp` 的 Linux；shell 默认 `sh`。
-- 首版 surface：`data.ssh_conn`、`ssh_resource`、`data.ssh_data`、`ephemeral.ssh_data`。
+- 首版 surface：`data.ssh_conn`、`ssh_resource`、`data.ssh_data`、`data.ssh_sensitive_data`、`ephemeral.ssh_data`。
 - 不实现原方案的 `ephemeral.ssh_connection`、provider function、跨进程连接池或外部 daemon。
 - 项目使用 MIT license。
 
@@ -72,15 +72,16 @@ Read 只能使用 prior state。若旧私钥已失效，需要先使 state 中�
 | 值 | 显示 | plan/state |
 | --- | --- | --- |
 | `data.ssh_conn.private_key` 与输出 `conn` | Sensitive | 持久化，包含私钥 |
-| `ssh_resource.conn` / `data.ssh_data.conn` | Sensitive | 持久化，包含私钥 |
+| `ssh_resource.conn` / `data.ssh_data.conn` / `data.ssh_sensitive_data.conn` | Sensitive | 持久化，包含私钥 |
 | `ephemeral.ssh_data.conn` 及结果 | 按 ephemeral 语义 | 不持久化 |
 | `data.ssh_data.values` | 普通 | 持久化 |
-| `data.ssh_data.sensitive_values` | Sensitive | 持久化 |
+| `data.ssh_sensitive_data.values` | Sensitive | 持久化 |
+| `ephemeral.ssh_data.values` | Sensitive | 不持久化 |
 | 普通 file `content` | 按 schema | 持久化 |
 | file `content_wo` | WriteOnly | 原文不持久化 |
 | WriteOnly 内容 SHA-256 | 普通 computed | 持久化，不是加密 |
 
-低熵 WriteOnly 内容的 SHA-256 可能被离线猜测。私钥和普通 data 结果进入 state 是当前明确接受的安全边界；文档示例附近必须有警告，不能把 Sensitive 描述成加密。
+低熵 WriteOnly 内容的 SHA-256 可能被离线猜测。私钥、`data.ssh_data.values` 和 `data.ssh_sensitive_data.values` 进入 state 是当前明确接受的安全边界；文档示例附近必须有警告，不能把 Sensitive 描述成加密。
 
 ## 4. `ssh_resource`
 
@@ -152,9 +153,9 @@ file 的 `content` 和 `content_wo` 必须二选一，空字符串有效。普�
 
 不支持额外 `ImportState`；首版导入机制就是路径块级 `auto_import`。
 
-## 5. `data.ssh_data` 与 `ephemeral.ssh_data`
+## 5. `data.ssh_data`、`data.ssh_sensitive_data` 与 `ephemeral.ssh_data`
 
-两种 surface 使用相同操作模型；普通 data 持久化 conn 和结果，ephemeral 不持久化。
+三种 surface 使用相同的 conn/sudo/timeout/file/command/run 配置和执行语义。普通 data 持久化 conn 与结果；敏感 data 持久化 conn 与结果，但整个结果 map 静态 Sensitive；ephemeral 不持久化结果。
 
 ```hcl
 data "ssh_data" "mydata" {
@@ -162,9 +163,8 @@ data "ssh_data" "mydata" {
   sudo = false
 
   file {
-    key       = "key1"
-    path      = "/etc/someconfig"
-    sensitive = true
+    key  = "key1"
+    path = "/etc/someconfig"
   }
 
   command {
@@ -180,9 +180,18 @@ data "ssh_data" "mydata" {
     envs   = { KEY = "value" }
   }
 }
+
+data "ssh_sensitive_data" "secret" {
+  conn = data.ssh_conn.myserver.conn
+
+  file {
+    key  = "key4"
+    path = "/run/secrets/token"
+  }
+}
 ```
 
-公共字段：`key` 必填且全局唯一；`index = 0` 且非负；`sensitive = false`；`sudo` 为三态覆盖；`timeout = "5m"`。
+公共字段：`key` 必填且全局唯一；`index = 0` 且非负；`sudo` 为三态覆盖；`timeout = "5m"`。三种 surface 都没有块级 `sensitive` 参数，也没有 `sensitive_values`。
 
 - file：`path` 必填。
 - command：`command` 为非空 argv，provider 安全 shell-quote，不解释用户 shell 运算符。
@@ -191,10 +200,13 @@ data "ssh_data" "mydata" {
 - 顶层 sudo 默认 false；操作未设置时继承，显式 true/false 覆盖。所有 sudo 都使用 `sudo -n`，不接收密码。需要环境时显式传递允许的变量，不依赖 `sudo -E`。
 - 所有配置错误必须在任何远端操作前一次性报告。按 index 从小到大执行，同 index 不承诺顺序；实现可顺序遍历，不刻意 shuffle。首错使整个操作失败，不返回部分 map，不回滚已产生的远端副作用。
 - file 返回完整内容，command/run 成功时返回完整 stdout；保留结尾换行，拒绝非 UTF-8。
-- 普通 key 写入 `values`，sensitive key 写入 `sensitive_values`；空结果返回非 null 空 map。
+- 所有结果统一写入 `values`；空结果返回非 null 空 map。`data.ssh_sensitive_data.values` 与 `ephemeral.ssh_data.values` 的 Sensitive 是静态 schema 属性，不是配置参数。
+- 每个 file/command/run 块都有 `trim`，Optional，默认 true。schema 使用 Optional+Computed，读取时把省略值规范化为 true 写回 plan/state，使该默认值稳定且不依赖结果 map。执行时先校验完整输出的 UTF-8，再对完整结果应用 `strings.TrimSpace`；`trim = false` 精确保留前后空白和结尾换行；仅含空白的结果变为空串；输出上限仍按 trim 前的原始字节计算。未知 `trim` 在任何远端操作前报错。
+- `data.ssh_sensitive_data` 是普通 data source：Sensitive 只影响 CLI 显示，结果仍进入 plan/state。它和 `ephemeral.ssh_data` 的所有操作都抑制远端 stderr 和错误详情；`data.ssh_data` 的诊断包含有界、面向排错的 stderr。
+- 内部 `Execute` 接收调用方固定的 sensitive bool 仅用于诊断，返回单一结果 map；不存在按块分流的结果 map。
 - 单项 file/stdout 默认最多 512 KiB（524288 bytes）。只允许通过 `SSH_PROVIDER_MAX_OUTPUT_SIZE` 环境变量修改，不提供 HCL 参数，不允许无限制。`ssh_resource` 普通 `content` 的写入和 refresh 读取也使用同一上限；WriteOnly 内容不受该上限约束，摘要以流式计算。
 - command/run 使用远端 `timeout` 加本地 session 清理；SFTP 卡顿时关闭连接解阻塞。超时使当前项失败。
-- sensitive 操作的 stderr 不进入诊断；非 sensitive 操作仅包含有界、面向排错的 stderr，不泄露 conn 或私钥。
+- 迁移：旧块级 `sensitive = true` 的操作改放到 `data.ssh_sensitive_data`（ephemeral 则删除该参数），旧 `.sensitive_values["key"]` 改为 `.values["key"]`。`trim` 默认 true 会改变既有输出；依赖原始前后空白或结尾换行的配置必须显式 `trim = false`。data source 与 ephemeral schema 不能版本化，没有自动 state 升级，必须 refresh。
 
 ## 6. 实现边界
 

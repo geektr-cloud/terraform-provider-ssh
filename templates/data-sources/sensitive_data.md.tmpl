@@ -1,0 +1,57 @@
+---
+page_title: "ssh_sensitive_data Data Source - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Reads remote files and executes commands over SSH with every result marked sensitive.
+---
+
+# ssh_sensitive_data (Data Source)
+
+Reads remote files and executes commands or scripts over SSH using the same connection, sudo, timeout, and operation model as `data.ssh_data`. Every result is written to `values`, which is statically marked Sensitive for CLI display.
+
+This data source has no `sensitive` argument and no separate result map. It always suppresses remote stderr and error details in diagnostics, so failures cannot leak sensitive command output; exit status is still reported.
+
+!> **Sensitive is not encryption.** This is an ordinary data source: `values` is persisted in Terraform plan and state, including any file content, command stdout, or script stdout. Use encrypted remote state and restricted access. Use `ephemeral.ssh_data` when results must not be persisted.
+
+- `file` reads a regular file (following a symlink to a regular file) and requires valid UTF-8. Directories and special files are rejected.
+- `command` runs a non-empty argv. The provider shell-quotes each argument; shell operators inside an argument are not interpreted.
+- `run` feeds the script body to the configured interpreter over stdin (`<shell> -s`), so no script file is written and the script does not appear in the remote process argv.
+- Every `file`, `command`, and `run` block accepts `trim`, which defaults to `true`. After UTF-8 validation, `strings.TrimSpace` removes leading and trailing Unicode whitespace from the complete result. Set `trim = false` to preserve exact output, including trailing newlines. A whitespace-only result becomes an empty string. Trimming happens after the raw-output size check.
+- All operations validate before any remote action. They run in ascending `index` order. Same-index operations have a deterministic provider order. The first failure aborts the remaining operations and returns no partial map.
+- Error diagnostics never include remote stderr. Exit status is still reported. Configuration errors that are independent of remote output (invalid path, shell, timeout, duplicate key) are also reported.
+
+The per-item output limit is 512 KiB by default. It can be changed only through the `SSH_PROVIDER_MAX_OUTPUT_SIZE` environment variable (bytes, positive integer). There is no HCL argument and no unlimited mode.
+
+## Example Usage
+
+```hcl
+data "ssh_sensitive_data" "credential" {
+  conn = data.ssh_conn.server.conn
+
+  file {
+    key  = "token"
+    path = "/run/secrets/api-token"
+  }
+
+  command {
+    key     = "fingerprint"
+    command = ["ssh-keygen", "-lf", "/etc/ssh/ssh_host_ed25519_key.pub"]
+  }
+}
+
+output "token" {
+  value     = data.ssh_sensitive_data.credential.values["token"]
+  sensitive = true
+}
+```
+
+## Migration from `data.ssh_data`
+
+Earlier versions accepted `sensitive = true` inside `file`, `command`, and `run` blocks and returned sensitive results in `sensitive_values`. Migrate as follows:
+
+1. Change the type from `ssh_data` to `ssh_sensitive_data` for configurations that produced sensitive results.
+2. Remove every block-level `sensitive` argument. All results are sensitive in this data source.
+3. Replace `.sensitive_values["key"]` with `.values["key"]`.
+4. Add `trim = false` to any block that must preserve leading or trailing whitespace; the new default is `true`.
+5. Refresh state. Data source schemas cannot be versioned, so no automatic state upgrade exists.
+{{ .SchemaMarkdown | trimspace }}

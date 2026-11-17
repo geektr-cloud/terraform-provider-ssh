@@ -21,83 +21,82 @@ import (
 
 const outputLimitEnv = "SSH_PROVIDER_MAX_OUTPUT_SIZE"
 
-// OpsModel is the shared configuration for data.ssh_data and
-// ephemeral.ssh_data.
+// OpsModel is the shared configuration for data.ssh_data,
+// data.ssh_sensitive_data, and ephemeral.ssh_data.
 type OpsModel struct {
-	Conn            *ConnectionModel `tfsdk:"conn"`
-	Sudo            types.Bool       `tfsdk:"sudo"`
-	Timeout         types.String     `tfsdk:"timeout"`
-	Files           types.List       `tfsdk:"file"`
-	Commands        types.List       `tfsdk:"command"`
-	Runs            types.List       `tfsdk:"run"`
-	Values          types.Map        `tfsdk:"values"`
-	SensitiveValues types.Map        `tfsdk:"sensitive_values"`
+	Conn     *ConnectionModel `tfsdk:"conn"`
+	Sudo     types.Bool       `tfsdk:"sudo"`
+	Timeout  types.String     `tfsdk:"timeout"`
+	Files    types.List       `tfsdk:"file"`
+	Commands types.List       `tfsdk:"command"`
+	Runs     types.List       `tfsdk:"run"`
+	Values   types.Map        `tfsdk:"values"`
 }
 
 // FileOperationModel is one file read operation.
 type FileOperationModel struct {
-	Key       types.String `tfsdk:"key"`
-	Path      types.String `tfsdk:"path"`
-	Index     types.Int64  `tfsdk:"index"`
-	Sensitive types.Bool   `tfsdk:"sensitive"`
-	Sudo      types.Bool   `tfsdk:"sudo"`
-	Timeout   types.String `tfsdk:"timeout"`
+	Key     types.String `tfsdk:"key"`
+	Path    types.String `tfsdk:"path"`
+	Index   types.Int64  `tfsdk:"index"`
+	Trim    types.Bool   `tfsdk:"trim"`
+	Sudo    types.Bool   `tfsdk:"sudo"`
+	Timeout types.String `tfsdk:"timeout"`
 }
 
 // CommandOperationModel is one argv command operation.
 type CommandOperationModel struct {
-	Key       types.String `tfsdk:"key"`
-	Command   types.List   `tfsdk:"command"`
-	Index     types.Int64  `tfsdk:"index"`
-	Sensitive types.Bool   `tfsdk:"sensitive"`
-	Sudo      types.Bool   `tfsdk:"sudo"`
-	Timeout   types.String `tfsdk:"timeout"`
+	Key     types.String `tfsdk:"key"`
+	Command types.List   `tfsdk:"command"`
+	Index   types.Int64  `tfsdk:"index"`
+	Trim    types.Bool   `tfsdk:"trim"`
+	Sudo    types.Bool   `tfsdk:"sudo"`
+	Timeout types.String `tfsdk:"timeout"`
 }
 
 // RunOperationModel is one remote script operation.
 type RunOperationModel struct {
-	Key       types.String `tfsdk:"key"`
-	Script    types.String `tfsdk:"script"`
-	Shell     types.String `tfsdk:"shell"`
-	Envs      types.Map    `tfsdk:"envs"`
-	Index     types.Int64  `tfsdk:"index"`
-	Sensitive types.Bool   `tfsdk:"sensitive"`
-	Sudo      types.Bool   `tfsdk:"sudo"`
-	Timeout   types.String `tfsdk:"timeout"`
+	Key     types.String `tfsdk:"key"`
+	Script  types.String `tfsdk:"script"`
+	Shell   types.String `tfsdk:"shell"`
+	Envs    types.Map    `tfsdk:"envs"`
+	Index   types.Int64  `tfsdk:"index"`
+	Trim    types.Bool   `tfsdk:"trim"`
+	Sudo    types.Bool   `tfsdk:"sudo"`
+	Timeout types.String `tfsdk:"timeout"`
 }
 
 func fileOperationAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"key":       types.StringType,
-		"path":      types.StringType,
-		"index":     types.Int64Type,
-		"sensitive": types.BoolType,
-		"sudo":      types.BoolType,
-		"timeout":   types.StringType,
+		"key":     types.StringType,
+		"path":    types.StringType,
+		"index":   types.Int64Type,
+		"trim":    types.BoolType,
+		"sudo":    types.BoolType,
+		"timeout": types.StringType,
 	}
 }
 
 func commandOperationAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"key":       types.StringType,
-		"command":   types.ListType{ElemType: types.StringType},
-		"index":     types.Int64Type,
-		"sensitive": types.BoolType,
-		"sudo":      types.BoolType,
-		"timeout":   types.StringType,
+		"key":     types.StringType,
+		"command": types.ListType{ElemType: types.StringType},
+		"index":   types.Int64Type,
+		"trim":    types.BoolType,
+		"sudo":    types.BoolType,
+		"timeout": types.StringType,
 	}
 }
 
 func runOperationAttrTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"key":       types.StringType,
-		"script":    types.StringType,
-		"shell":     types.StringType,
-		"envs":      types.MapType{ElemType: types.StringType},
-		"index":     types.Int64Type,
-		"sensitive": types.BoolType,
-		"sudo":      types.BoolType,
-		"timeout":   types.StringType,
+		"key":     types.StringType,
+		"script":  types.StringType,
+		"shell":   types.StringType,
+		"envs":    types.MapType{ElemType: types.StringType},
+		"index":   types.Int64Type,
+		"trim":    types.BoolType,
+		"sudo":    types.BoolType,
+		"timeout": types.StringType,
 	}
 }
 
@@ -182,14 +181,14 @@ func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Dia
 		seen[key.ValueString()] = where
 		return true
 	}
-	checkCommon := func(index types.Int64, sensitive, sudo types.Bool, timeout types.String, where string) {
+	checkCommon := func(index types.Int64, trim, sudo types.Bool, timeout types.String, where string) {
 		if index.IsUnknown() {
 			diags.AddError("Unknown index", fmt.Sprintf("%s index is not known during this operation.", where))
 		} else if !index.IsNull() && index.ValueInt64() < 0 {
 			diags.AddError("Invalid index", fmt.Sprintf("%s index must be non-negative.", where))
 		}
-		if sensitive.IsUnknown() {
-			diags.AddError("Unknown sensitive flag", fmt.Sprintf("%s sensitive is not known during this operation.", where))
+		if trim.IsUnknown() {
+			diags.AddError("Unknown trim flag", fmt.Sprintf("%s trim is not known during this operation.", where))
 		}
 		if sudo.IsUnknown() {
 			diags.AddError("Unknown sudo flag", fmt.Sprintf("%s sudo is not known during this operation.", where))
@@ -212,7 +211,7 @@ func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Dia
 		} else if err := ValidateManagedPath(f.Path.ValueString()); err != nil {
 			diags.AddError("Invalid file path", fmt.Sprintf("%s: %s", where, err))
 		}
-		checkCommon(f.Index, f.Sensitive, f.Sudo, f.Timeout, where)
+		checkCommon(f.Index, f.Trim, f.Sudo, f.Timeout, where)
 	}
 
 	for i := range commands {
@@ -238,7 +237,7 @@ func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Dia
 				}
 			}
 		}
-		checkCommon(c.Index, c.Sensitive, c.Sudo, c.Timeout, where)
+		checkCommon(c.Index, c.Trim, c.Sudo, c.Timeout, where)
 	}
 
 	for i := range runs {
@@ -272,7 +271,7 @@ func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Dia
 				}
 			}
 		}
-		checkCommon(r.Index, r.Sensitive, r.Sudo, r.Timeout, where)
+		checkCommon(r.Index, r.Trim, r.Sudo, r.Timeout, where)
 	}
 
 	if diags.HasError() {
@@ -282,31 +281,32 @@ func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Dia
 }
 
 // Execute opens one SSH connection, runs every operation in index order, and
-// closes the connection. Any failure aborts the remaining operations.
-func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]string, diag.Diagnostics) {
+// closes the connection. Any failure aborts the remaining operations. The
+// caller-supplied sensitive flag suppresses remote stderr and error details in
+// diagnostics for every operation.
+func (m *OpsModel) Execute(ctx context.Context, sensitive bool) (map[string]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	cfg, limit, d := m.Validate(ctx)
 	diags.Append(d...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, diags
 	}
 
 	files, commands, runs, d := m.decodeOperations(ctx)
 	diags.Append(d...)
 	if diags.HasError() {
-		return nil, nil, diags
+		return nil, diags
 	}
 
 	connClient, err := client.Dial(ctx, cfg)
 	if err != nil {
 		diags.AddError("SSH connection failed", err.Error())
-		return nil, nil, diags
+		return nil, diags
 	}
 	defer func() { _ = connClient.Close() }()
 
 	fs := &remote.FS{Client: connClient, Timeout: cfg.Timeout}
 	values := map[string]string{}
-	sensitive := map[string]string{}
 
 	ops := make([]plannedOperation, 0, len(files)+len(commands)+len(runs))
 	for i := range files {
@@ -346,7 +346,7 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 		var (
 			out       string
 			key       string
-			isSens    bool
+			trim      bool
 			opErr     error
 			scriptRes *client.ExecResult
 		)
@@ -356,22 +356,22 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 			timeout, err := durationFrom(f.Timeout, cfg.Timeout.String(), "timeout")
 			if err != nil {
 				diags.AddError("Invalid timeout", err.Error())
-				return nil, nil, diags
+				return nil, diags
 			}
 			fs.Timeout = timeout
 			key = f.Key.ValueString()
-			isSens = f.Sensitive.ValueBool()
+			trim = effectiveTrim(f.Trim)
 			fs.AllowSudo = effectiveBool(m.Sudo, f.Sudo)
 			st, statErr := fs.Stat(ctx, f.Path.ValueString())
 			switch {
 			case statErr != nil:
-				opErr = describeOpError(statErr, isSens, nil)
+				opErr = describeOpError(statErr, sensitive, nil)
 			case st.Type != remote.File:
 				opErr = fmt.Errorf("path %q is a %s, not a regular file", f.Path.ValueString(), st.Type)
 			default:
 				data, readErr := fs.ReadFile(ctx, f.Path.ValueString(), limit)
 				if readErr != nil {
-					opErr = describeOpError(readErr, isSens, nil)
+					opErr = describeOpError(readErr, sensitive, nil)
 				} else if !utf8.Valid(data) {
 					opErr = errors.New("file content is not valid UTF-8")
 				} else {
@@ -383,15 +383,15 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 			timeout, err := durationFrom(c.Timeout, cfg.Timeout.String(), "timeout")
 			if err != nil {
 				diags.AddError("Invalid timeout", err.Error())
-				return nil, nil, diags
+				return nil, diags
 			}
 			fs.Timeout = timeout
 			key = c.Key.ValueString()
-			isSens = c.Sensitive.ValueBool()
+			trim = effectiveTrim(c.Trim)
 			var argv []string
 			diags.Append(c.Command.ElementsAs(ctx, &argv, false)...)
 			if diags.HasError() {
-				return nil, nil, diags
+				return nil, diags
 			}
 			res, runErr := connClient.Run(ctx, client.ExecOptions{
 				Args:      argv,
@@ -402,7 +402,7 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 				MaxStderr: 16 * 1024,
 			})
 			if runErr != nil {
-				opErr = describeOpError(runErr, isSens, res)
+				opErr = describeOpError(runErr, sensitive, res)
 			} else if res.StdoutTruncated || int64(len(res.Stdout)) > limit {
 				opErr = client.ErrOutputLimit
 			} else if !utf8.Valid(res.Stdout) {
@@ -415,11 +415,11 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 			timeout, err := durationFrom(r.Timeout, cfg.Timeout.String(), "timeout")
 			if err != nil {
 				diags.AddError("Invalid timeout", err.Error())
-				return nil, nil, diags
+				return nil, diags
 			}
 			fs.Timeout = timeout
 			key = r.Key.ValueString()
-			isSens = r.Sensitive.ValueBool()
+			trim = effectiveTrim(r.Trim)
 			envs := map[string]string{}
 			for k, v := range cfg.Envs {
 				envs[k] = v
@@ -432,27 +432,26 @@ func (m *OpsModel) Execute(ctx context.Context) (map[string]string, map[string]s
 				}
 			}
 			if diags.HasError() {
-				return nil, nil, diags
+				return nil, diags
 			}
 			out, scriptRes, opErr = executeScript(ctx, connClient, r, envs, effectiveBool(m.Sudo, r.Sudo), timeout, limit)
 			if opErr != nil {
-				opErr = describeOpError(opErr, isSens, scriptRes)
+				opErr = describeOpError(opErr, sensitive, scriptRes)
 			} else if !utf8.ValidString(out) {
 				opErr = errors.New("script stdout is not valid UTF-8")
 			}
 		}
 		if opErr != nil {
 			diags.AddError("SSH operation failed", fmt.Sprintf("key %q: %s", key, opErr.Error()))
-			return nil, nil, diags
+			return nil, diags
 		}
-		if isSens {
-			sensitive[key] = out
-		} else {
-			values[key] = out
+		if trim {
+			out = strings.TrimSpace(out)
 		}
+		values[key] = out
 	}
 
-	return values, sensitive, diags
+	return values, diags
 }
 
 func operationLess(a, b plannedOperation) bool {
@@ -500,6 +499,14 @@ func effectiveBool(top, op types.Bool) bool {
 		return top.ValueBool()
 	}
 	return false
+}
+
+// effectiveTrim applies the documented default: an omitted trim means true.
+func effectiveTrim(v types.Bool) bool {
+	if !v.IsNull() && !v.IsUnknown() {
+		return v.ValueBool()
+	}
+	return true
 }
 
 func durationFrom(v types.String, def, name string) (time.Duration, error) {
@@ -621,6 +628,44 @@ func ValidateShell(shell string) error {
 		}
 	}
 	return nil
+}
+
+// ApplyTrimDefaults records the documented default for omitted `trim` flags so
+// plan and state carry a stable, known value instead of null.
+func (m *OpsModel) ApplyTrimDefaults() diag.Diagnostics {
+	var diags diag.Diagnostics
+	var d diag.Diagnostics
+	m.Files, d = withTrimDefaults(m.Files, fileOperationAttrTypes())
+	diags.Append(d...)
+	m.Commands, d = withTrimDefaults(m.Commands, commandOperationAttrTypes())
+	diags.Append(d...)
+	m.Runs, d = withTrimDefaults(m.Runs, runOperationAttrTypes())
+	diags.Append(d...)
+	return diags
+}
+
+func withTrimDefaults(list types.List, attrTypes map[string]attr.Type) (types.List, diag.Diagnostics) {
+	if list.IsNull() || list.IsUnknown() {
+		return list, nil
+	}
+	var diags diag.Diagnostics
+	elements := list.Elements()
+	normalized := make([]attr.Value, len(elements))
+	for i, element := range elements {
+		object, ok := element.(types.Object)
+		if !ok {
+			diags.AddError("Invalid operation model", fmt.Sprintf("operation %d is %T, not an object.", i, element))
+			return list, diags
+		}
+		attrs := object.Attributes()
+		if attrs["trim"].IsNull() {
+			attrs["trim"] = types.BoolValue(true)
+			normalized[i] = types.ObjectValueMust(attrTypes, attrs)
+		} else {
+			normalized[i] = object
+		}
+	}
+	return types.ListValue(types.ObjectType{AttrTypes: attrTypes}, normalized)
 }
 
 // ValuesMap converts a result map into a Terraform map value.

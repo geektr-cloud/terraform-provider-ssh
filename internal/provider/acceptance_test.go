@@ -166,6 +166,7 @@ data "ssh_data" "test" {
   file {
     key  = "file"
     path = %q
+    trim = false
   }
 
   command {
@@ -173,14 +174,20 @@ data "ssh_data" "test" {
     command = ["printf", "%%s", "command data"]
   }
 
+  command {
+    key     = "padded"
+    command = ["printf", "  padded  "]
+  }
+
   run {
     key    = "run"
-    script = "printf 'run data'"
+    script = "printf '  run data  \\n'"
   }
 }
 
 output "file_value" { value = data.ssh_data.test.values["file"] }
 output "command_value" { value = data.ssh_data.test.values["command"] }
+output "padded_value" { value = data.ssh_data.test.values["padded"] }
 output "run_value" { value = data.ssh_data.test.values["run"] }
 `, file))
 
@@ -190,9 +197,81 @@ output "run_value" { value = data.ssh_data.test.values["run"] }
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.ssh_data.test", "file.0.trim", "false"),
+					resource.TestCheckResourceAttr("data.ssh_data.test", "command.1.trim", "true"),
+					resource.TestCheckResourceAttr("data.ssh_data.test", "run.0.trim", "true"),
 					resource.TestCheckOutput("file_value", "file data\n"),
 					resource.TestCheckOutput("command_value", "command data"),
+					resource.TestCheckOutput("padded_value", "padded"),
 					resource.TestCheckOutput("run_value", "run data"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccSensitiveDataSource(t *testing.T) {
+	server := testsupport.Start(t)
+	conn := testAccConn(t, server)
+	base := t.TempDir()
+	file := filepath.Join(base, "secret.txt")
+	if err := os.WriteFile(file, []byte("secret file\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	config := testAccProviderConfig(conn, fmt.Sprintf(`
+data "ssh_sensitive_data" "test" {
+  conn = data.ssh_conn.test.conn
+
+  file {
+    key  = "file"
+    path = %q
+    trim = false
+  }
+
+  command {
+    key     = "command"
+    command = ["printf", "%%s", "  secret command  "]
+  }
+
+  run {
+    key    = "run"
+    script = "printf '  secret run  \\n'"
+  }
+}
+
+output "file_value" {
+  value     = data.ssh_sensitive_data.test.values["file"]
+  sensitive = true
+}
+
+output "command_value" {
+  value     = data.ssh_sensitive_data.test.values["command"]
+  sensitive = true
+}
+
+output "run_value" {
+  value     = data.ssh_sensitive_data.test.values["run"]
+  sensitive = true
+}
+`, file))
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "file.0.trim", "false"),
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "command.0.trim", "true"),
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "run.0.trim", "true"),
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "values.file", "secret file\n"),
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "values.command", "secret command"),
+					resource.TestCheckResourceAttr("data.ssh_sensitive_data.test", "values.run", "secret run"),
+					resource.TestCheckNoResourceAttr("data.ssh_sensitive_data.test", "sensitive_values"),
+					resource.TestCheckOutput("file_value", "secret file\n"),
+					resource.TestCheckOutput("command_value", "secret command"),
+					resource.TestCheckOutput("run_value", "secret run"),
 				),
 			},
 		},

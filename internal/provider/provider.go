@@ -55,6 +55,7 @@ func (p *SSHProvider) DataSources(_ context.Context) []func() datasource.DataSou
 	return []func() datasource.DataSource{
 		func() datasource.DataSource { return &sshConnDataSource{} },
 		func() datasource.DataSource { return &sshDataDataSource{} },
+		func() datasource.DataSource { return &sshSensitiveDataDataSource{} },
 	}
 }
 
