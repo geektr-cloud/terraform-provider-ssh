@@ -24,13 +24,16 @@ const outputLimitEnv = "SSH_PROVIDER_MAX_OUTPUT_SIZE"
 // OpsModel is the shared configuration for data.ssh_data,
 // data.ssh_sensitive_data, and ephemeral.ssh_data.
 type OpsModel struct {
-	Conn     *ConnectionModel `tfsdk:"conn"`
-	Sudo     types.Bool       `tfsdk:"sudo"`
-	Timeout  types.String     `tfsdk:"timeout"`
-	Files    types.List       `tfsdk:"file"`
-	Commands types.List       `tfsdk:"command"`
-	Runs     types.List       `tfsdk:"run"`
-	Values   types.Map        `tfsdk:"values"`
+	Conn     types.String `tfsdk:"conn"`
+	Sudo     types.Bool   `tfsdk:"sudo"`
+	Timeout  types.String `tfsdk:"timeout"`
+	Files    types.List   `tfsdk:"file"`
+	Commands types.List   `tfsdk:"command"`
+	Runs     types.List   `tfsdk:"run"`
+	Values   types.Map    `tfsdk:"values"`
+
+	// defaults is injected from the provider configuration before execution.
+	defaults *providerDefaults
 }
 
 // FileOperationModel is one file read operation.
@@ -137,9 +140,13 @@ type plannedOperation struct {
 // Validate performs all configuration checks before any remote operation.
 func (m *OpsModel) Validate(ctx context.Context) (client.Config, int64, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	cfg, connDiags := toClientConfig(ctx, m.Conn)
-	diags.Append(connDiags...)
-	if diags.HasError() {
+	if m.defaults == nil {
+		diags.AddError("Provider configuration is not available", "The SSH provider was not configured.")
+		return client.Config{}, 0, diags
+	}
+	cfg, err := resolveConnConfig(m.defaults.profile, m.Conn)
+	if err != nil {
+		diags.AddError("Invalid connection profile", err.Error())
 		return client.Config{}, 0, diags
 	}
 

@@ -1,5 +1,5 @@
 ---
-page_title: "{{.ProviderShortName}} Provider"
+page_title: "{{.ProviderName}} Provider"
 subcategory: ""
 description: |-
   The SSH provider manages remote files and directories and reads files or runs commands over SSH.
@@ -9,9 +9,18 @@ description: |-
 
 The SSH provider manages remote files and directories, and performs one-shot file reads and command execution. It targets Linux hosts with GNU coreutils `install`, `timeout`, and `mktemp` available.
 
-Use `data.ssh_conn` to validate connection settings and obtain a sensitive Connection Profile, then pass that profile to `ssh_resource`, `data.ssh_data`, `data.ssh_sensitive_data`, or `ephemeral.ssh_data`.
+Connection settings live in two layers. The `provider "ssh"` block holds optional Provider Connection Defaults shared by every consumer. Each `ssh_resource`, `data.ssh_data`, `data.ssh_sensitive_data`, and `ephemeral.ssh_data` may set `conn` to a Sensitive JSON object string that overrides only the fields that differ. Built-in defaults fill whatever remains.
 
--> The provider requires Terraform or OpenTofu 1.11 or later because `ssh_resource.file.content_wo` uses write-only attributes.
+- Omit `conn`, set JSON `null`, or set `{}` to inherit the provider defaults unchanged.
+- JSON absent fields inherit; JSON `null` clears the provider value and returns to the built-in default; explicit `envs` merges by key; `jump` replaces the whole jump profile.
+- JSON must be an object or `null`. Unknown fields, duplicate keys at any level, arrays, scalars, and wrong value types are rejected with a field path, never the raw JSON or secret values.
+- Only `conn` from the configuration is persisted by ordinary consumers. Provider-level private keys never enter resource or data source state. A private key written inside `conn` does.
+
+Use `provider::ssh::connection(host, user, port)` to build a JSON override for a dynamic target without network access, key material, or provider reads.
+
+-> When an identity change triggers replacement, Read and Delete still use the current provider defaults and override, not the prior identity. Ensure same-named paths on the current endpoint are safe to refresh and delete; otherwise restore the old endpoint and destroy first.
+
+-> The provider requires Terraform or OpenTofu 1.11 or later because `ssh_resource.file.content_wo` uses write-only attributes. Provider functions require 1.11 or later as well.
 
 ## Example Usage
 
@@ -24,17 +33,18 @@ terraform {
   }
 }
 
-data "ssh_conn" "server" {
+provider "ssh" {
   host        = "example.internal"
   port        = "22"
   user        = "deploy"
   private_key = file("~/.ssh/id_ed25519")
   known_hosts = "~/.ssh/known_hosts"
+  envs        = { LANG = "C" }
+  timeout     = "5m"
+  retry_delay = "5s"
 }
 
 resource "ssh_resource" "config" {
-  conn = data.ssh_conn.server.conn
-
   directory {
     path = "/etc/myapp"
     mode = "0755"
@@ -48,5 +58,5 @@ resource "ssh_resource" "config" {
 }
 ```
 
-!> `data.ssh_conn.conn` is sensitive, but Sensitive only redacts display. The private key and the complete Connection Profile are persisted in Terraform plan and state. Use encrypted remote state and restrict access accordingly.
-{{ .SchemaMarkdown }}
+!> Provider-level connection defaults are Sensitive in the provider schema, but Sensitive only redacts display. The provider private key is not copied into consumer state, but a private key placed in a consumer's `conn` JSON is persisted. Use encrypted remote state and restrict access.
+{{ .SchemaMarkdown | trimspace }}

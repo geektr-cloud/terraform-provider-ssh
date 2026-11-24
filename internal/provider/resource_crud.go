@@ -43,7 +43,7 @@ func (r *sshResource) Create(ctx context.Context, req resource.CreateRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(validateResourceModel(ctx, &cfg, true)...)
+	resp.Diagnostics.Append(validateResourceModel(ctx, &cfg, r.defaults, true)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -64,12 +64,12 @@ func (r *sshResource) Create(ctx context.Context, req resource.CreateRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	connModel, connDiags := effectiveConnection(ctx, &cfg, &plan)
-	resp.Diagnostics.Append(connDiags...)
+	identity, idDiags := applyConnectionIdentity(defaultsProfile(r.defaults), cfg.Conn)
+	resp.Diagnostics.Append(idDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	connClient, dialDiags := dialResource(ctx, connModel)
+	connClient, dialDiags := dialResource(ctx, r.defaults, cfg.Conn)
 	resp.Diagnostics.Append(dialDiags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -83,7 +83,7 @@ func (r *sshResource) Create(ctx context.Context, req resource.CreateRequest, re
 	fail := func(err error) {
 		diags.AddError("SSH resource apply failed", err.Error())
 		resp.Diagnostics.Append(diags...)
-		state := buildStateModel(ctx, &cfg, &plan, connModel, desired, umask, pathSetFromDirs(createdDirs), pathSetFromFiles(createdFiles))
+		state := buildStateModel(ctx, &cfg, &plan, identity, desired, umask, pathSetFromDirs(createdDirs), pathSetFromFiles(createdFiles))
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 	}
 
@@ -101,7 +101,7 @@ func (r *sshResource) Create(ctx context.Context, req resource.CreateRequest, re
 		}
 	}
 
-	state := buildStateModel(ctx, &cfg, &plan, connModel, desired, umask, nil, nil)
+	state := buildStateModel(ctx, &cfg, &plan, identity, desired, umask, nil, nil)
 	if errs := readManagedPaths(ctx, fs, &state); len(errs) > 0 {
 		resp.Diagnostics.Append(errs...)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -116,20 +116,14 @@ func (r *sshResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if state.Conn.IsNull() {
-		resp.State.RemoveResource(ctx)
-		return
-	}
 	if _, err := maxOutputSize(); err != nil {
 		resp.Diagnostics.AddError("Invalid output limit", err.Error())
 		return
 	}
-	connModel, connDiags := connectionFromObject(ctx, state.Conn)
-	resp.Diagnostics.Append(connDiags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	connClient, diags := dialResource(ctx, connModel)
+	// Read reconnects with the current provider defaults and the prior
+	// Connection Override. It preserves the prior Connection Identity so a
+	// later plan can detect provider default changes.
+	connClient, diags := dialResource(ctx, r.defaults, state.Conn)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -142,6 +136,14 @@ func (r *sshResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		resp.Diagnostics.Append(errs...)
 		return
 	}
+	if state.ConnectionIdentity.IsNull() || state.ConnectionIdentity.IsUnknown() || state.ConnectionIdentity.ValueString() == "" {
+		if identity, known, err := resolveConnIdentity(defaultsProfile(r.defaults), state.Conn); err != nil {
+			resp.Diagnostics.AddError("Invalid connection override", err.Error())
+			return
+		} else if known {
+			state.ConnectionIdentity = types.StringValue(identity)
+		}
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -153,7 +155,7 @@ func (r *sshResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(validateResourceModel(ctx, &cfg, true)...)
+	resp.Diagnostics.Append(validateResourceModel(ctx, &cfg, r.defaults, true)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -174,12 +176,12 @@ func (r *sshResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	connModel, connDiags := effectiveConnection(ctx, &cfg, &plan)
-	resp.Diagnostics.Append(connDiags...)
+	identity, idDiags := applyConnectionIdentity(defaultsProfile(r.defaults), cfg.Conn)
+	resp.Diagnostics.Append(idDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	connClient, dialDiags := dialResource(ctx, connModel)
+	connClient, dialDiags := dialResource(ctx, r.defaults, cfg.Conn)
 	resp.Diagnostics.Append(dialDiags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -265,7 +267,7 @@ func (r *sshResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		priorByPath[entry.path] = true
 	}
 
-	state := buildStateModel(ctx, &cfg, &plan, connModel, desired, umask, nil, nil)
+	state := buildStateModel(ctx, &cfg, &plan, identity, desired, umask, nil, nil)
 	if errs := readManagedPaths(ctx, fs, &state); len(errs) > 0 {
 		resp.Diagnostics.Append(errs...)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -280,15 +282,10 @@ func (r *sshResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if state.Conn.IsNull() {
-		return
-	}
-	connModel, connDiags := connectionFromObject(ctx, state.Conn)
-	resp.Diagnostics.Append(connDiags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	connClient, diags := dialResource(ctx, connModel)
+	// Destroy uses the current provider defaults and the prior Connection
+	// Override. It cannot succeed if the provider configuration was removed or
+	// no longer supplies the missing profile fields.
+	connClient, diags := dialResource(ctx, r.defaults, state.Conn)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -331,11 +328,15 @@ func (r *sshResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	}
 }
 
-func dialResource(ctx context.Context, m *ConnectionModel) (*client.Client, diag.Diagnostics) {
+func dialResource(ctx context.Context, defaults *providerDefaults, raw types.String) (*client.Client, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	cfg, d := toClientConfig(ctx, m)
-	diags.Append(d...)
-	if diags.HasError() {
+	if defaults == nil {
+		diags.AddError("Provider configuration is not available", "The SSH provider was not configured. Destroy requires the current provider connection defaults when the resource conn override is incomplete.")
+		return nil, diags
+	}
+	cfg, err := resolveConnConfig(defaults.profile, raw)
+	if err != nil {
+		diags.AddError("Invalid connection profile", err.Error())
 		return nil, diags
 	}
 	c, err := client.Dial(ctx, cfg)
@@ -344,6 +345,23 @@ func dialResource(ctx context.Context, m *ConnectionModel) (*client.Client, diag
 		return nil, diags
 	}
 	return c, diags
+}
+
+// applyConnectionIdentity resolves the identity that must be recorded after
+// Create or Update. A successful connection resolution must always yield a
+// known identity.
+func applyConnectionIdentity(provider Profile, raw types.String) (types.String, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	identity, known, err := resolveConnIdentity(provider, raw)
+	if err != nil {
+		diags.AddError("Invalid connection override", err.Error())
+		return types.StringNull(), diags
+	}
+	if !known {
+		diags.AddError("Unknown connection identity", "host, port, and user for the target and jump host must be known at apply time.")
+		return types.StringNull(), diags
+	}
+	return types.StringValue(identity), diags
 }
 
 func buildDesired(ctx context.Context, cfg, plan *sshResourceModel, umask uint32, limit int64) ([]desiredEntry, diag.Diagnostics) {
@@ -585,88 +603,16 @@ func resolvedUmaskValue(cfg, plan types.String, parsed uint32) types.String {
 	return types.StringValue(fmt.Sprintf("%03o", parsed))
 }
 
-func buildStateModel(ctx context.Context, cfg, plan *sshResourceModel, connModel *ConnectionModel, desired []desiredEntry, umask uint32, allowedDirs, allowedFiles map[string]bool) sshResourceModel {
+func buildStateModel(_ context.Context, cfg, plan *sshResourceModel, identity types.String, desired []desiredEntry, umask uint32, allowedDirs, allowedFiles map[string]bool) sshResourceModel {
 	state := *cfg
+	// State keeps the raw Connection Override exactly as configured. Provider
+	// defaults, including the provider private key, are never copied here.
+	state.Conn = cfg.Conn
+	state.ConnectionIdentity = identity
 	state.Umask = resolvedUmaskValue(cfg.Umask, plan.Umask, umask)
-	if connModel != nil {
-		if obj, d := connObjectValue(ctx, normalizedConnectionModel(connModel)); !d.HasError() {
-			state.Conn = obj
-		}
-	}
 	state.Directories = desiredDirectories(desired, allowedDirs)
 	state.Files = desiredFiles(desired, allowedFiles)
 	return state
-}
-
-func effectiveConnection(ctx context.Context, cfg, plan *sshResourceModel) (*ConnectionModel, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	cfgModel, d := connectionFromObject(ctx, cfg.Conn)
-	diags.Append(d...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	var planModel *ConnectionModel
-	if plan != nil {
-		if pm, pd := connectionFromObject(ctx, plan.Conn); !pd.HasError() {
-			planModel = pm
-		}
-	}
-	return mergeConnectionModel(cfgModel, planModel), diags
-}
-
-// mergeConnectionModel uses configuration values and only fills
-// Optional+Computed connection fields from the plan when the configuration
-// omits them.
-func mergeConnectionModel(cfg, plan *ConnectionModel) *ConnectionModel {
-	out := *cfg
-	if plan == nil {
-		return &out
-	}
-	out.Type = preferKnownString(cfg.Type, plan.Type)
-	out.Port = preferKnownString(cfg.Port, plan.Port)
-	out.InsecureIgnoreHostKey = preferKnownBool(cfg.InsecureIgnoreHostKey, plan.InsecureIgnoreHostKey)
-	out.Envs = preferKnownMap(cfg.Envs, plan.Envs)
-	out.Timeout = preferKnownString(cfg.Timeout, plan.Timeout)
-	out.RetryDelay = preferKnownString(cfg.RetryDelay, plan.RetryDelay)
-	if cfg.Jump != nil {
-		j := *cfg.Jump
-		if plan.Jump != nil {
-			j.Port = preferKnownString(j.Port, plan.Jump.Port)
-			j.InsecureIgnoreHostKey = preferKnownBool(j.InsecureIgnoreHostKey, plan.Jump.InsecureIgnoreHostKey)
-		}
-		out.Jump = &j
-	}
-	return &out
-}
-
-func preferKnownString(cfg, plan types.String) types.String {
-	if !cfg.IsNull() && !cfg.IsUnknown() {
-		return cfg
-	}
-	if !plan.IsNull() && !plan.IsUnknown() {
-		return plan
-	}
-	return cfg
-}
-
-func preferKnownBool(cfg, plan types.Bool) types.Bool {
-	if !cfg.IsNull() && !cfg.IsUnknown() {
-		return cfg
-	}
-	if !plan.IsNull() && !plan.IsUnknown() {
-		return plan
-	}
-	return cfg
-}
-
-func preferKnownMap(cfg, plan types.Map) types.Map {
-	if !cfg.IsNull() && !cfg.IsUnknown() {
-		return cfg
-	}
-	if !plan.IsNull() && !plan.IsUnknown() {
-		return plan
-	}
-	return cfg
 }
 
 func sortDesired(entries []desiredEntry) {

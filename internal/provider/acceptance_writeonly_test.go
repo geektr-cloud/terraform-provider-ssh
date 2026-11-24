@@ -16,15 +16,14 @@ import (
 
 func TestAccEphemeralWriteOnly(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	target := filepath.Join(base, "ephemeral.txt")
 	want := sha256.Sum256([]byte("ephemeral-secret"))
 	wantDigest := hex.EncodeToString(want[:])
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 ephemeral "ssh_data" "secret" {
-  conn = data.ssh_conn.test.conn
   command {
     key     = "secret"
     command = ["printf", "%%s", "  ephemeral-secret  "]
@@ -32,7 +31,6 @@ ephemeral "ssh_data" "secret" {
 }
 
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   file {
     path       = %q
     content_wo = ephemeral.ssh_data.secret.values["secret"]
@@ -77,13 +75,12 @@ resource "ssh_resource" "test" {
 
 func TestAccWriteOnlyDriftRepair(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	target := filepath.Join(base, "drift.txt")
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   file {
     path       = %q
     content_wo = "original-secret"

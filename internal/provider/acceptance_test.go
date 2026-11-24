@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,38 +22,9 @@ func testAccFactories() map[string]func() (tfprotov6.ProviderServer, error) {
 	}
 }
 
-func testAccConn(t *testing.T, server *testsupport.Server) string {
-	t.Helper()
-	host, port, err := net.SplitHostPort(server.Addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fmt.Sprintf(`
-data "ssh_conn" "test" {
-  host       = %q
-  port       = %q
-  user       = "tester"
-  private_key = <<-EOT
-%s
-EOT
-  insecure_ignore_host_key = true
-}
-`, host, port, server.PrivateKeyPEM(t))
-}
-
-func testAccProviderConfig(conn string, body string) string {
-	return fmt.Sprintf(`
-provider "ssh" {}
-
-%s
-
-%s
-`, conn, body)
-}
-
 func TestAccResourceFilesAndDirectories(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	dir := filepath.Join(base, "dir")
 	file := filepath.Join(dir, "hello.txt")
@@ -63,9 +33,8 @@ func TestAccResourceFilesAndDirectories(t *testing.T) {
 	wantDigest := hex.EncodeToString(secretDigest[:])
 
 	config := func(content string) string {
-		return testAccProviderConfig(conn, fmt.Sprintf(`
+		return testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
 
   directory {
     path = %q
@@ -152,16 +121,15 @@ resource "ssh_resource" "test" {
 
 func TestAccDataFileCommandRun(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	file := filepath.Join(base, "input.txt")
 	if err := os.WriteFile(file, []byte("file data\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 data "ssh_data" "test" {
-  conn = data.ssh_conn.test.conn
 
   file {
     key  = "file"
@@ -212,16 +180,15 @@ output "run_value" { value = data.ssh_data.test.values["run"] }
 
 func TestAccSensitiveDataSource(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	file := filepath.Join(base, "secret.txt")
 	if err := os.WriteFile(file, []byte("secret file\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 data "ssh_sensitive_data" "test" {
-  conn = data.ssh_conn.test.conn
 
   file {
     key  = "file"
@@ -280,16 +247,15 @@ output "run_value" {
 
 func TestAccAutoImportAndPathDrift(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	file := filepath.Join(base, "adopted.txt")
 	if err := os.WriteFile(file, []byte("original"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
 
   file {
     path        = %q

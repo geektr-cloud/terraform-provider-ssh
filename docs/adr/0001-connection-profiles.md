@@ -1,5 +1,9 @@
 # 以持久 Connection Profile 替代进程内连接句柄
 
+## Status
+
+Superseded by [ADR 0002](0002-layered-connection-profiles.md). The historical decision below is kept for context; `data.ssh_conn` no longer exists.
+
 原始设计让 managed resource 引用 ephemeral connection 的 UUID，但 Terraform/OpenTofu 不允许 ephemeral 值进入普通持久参数；WriteOnly 又无法用于 Read/Delete。源码与原型进一步确认 function、data source 和 package 全局 map 都不能跨 graph walk、provider 进程或 destroy 保留连接，稳定 hash 也无法反推出重连凭据。首版改为 `data.ssh_conn` 在真实 SSH 冒烟成功后返回完整敏感 `conn` 对象，消费者将该对象持久化并在每个生命周期操作中独立重连；删除 `ephemeral.ssh_connection`，不为 managed resource 使用连接 map。
 
 ## Consequences

@@ -2,6 +2,35 @@
 
 All notable changes to this provider are documented here.
 
+## 0.2.0 (2026-11-25)
+
+### Added
+
+- Provider-level Connection Defaults. Every Connection Profile field is optional in the `provider "ssh"` block. `Configure` performs no network I/O.
+- Optional Sensitive JSON string `conn` on `ssh_resource`, `data.ssh_data`, `data.ssh_sensitive_data`, and `ephemeral.ssh_data`. Built-in defaults, provider defaults, and the override merge in that order. Explicit JSON `null` clears a provider value; `envs` merge by key; `jump` replaces the whole profile.
+- Strict JSON validation for `conn`: object or `null` only, no unknown fields, duplicate keys at any level, arrays, scalars, or wrong types. Diagnostics never echo raw JSON or secret values.
+- `ssh_resource.connection_identity`: a non-sensitive canonical target/jump identity. Identity changes replace the resource; credential, host-key, env, and timeout changes do not.
+- Provider function `provider::ssh::connection(host, user, port)`, returning only `{"host","user","port"}`. It is deterministic, performs no network access, and does not read provider configuration.
+- Tests covering provider defaults, partial configuration, JSON absent/null/empty/errors, env/jump/host-key merging, credential rotation, identity replacement, destroy with prior overrides, and state credential boundaries.
+
+### Changed
+
+- Consumers no longer persist the provider-level private key. State keeps the raw JSON override and the connection identity, and every lifecycle operation re-resolves with the current provider defaults.
+- `ssh_resource.Read` and `Delete` use the current provider defaults plus the prior override. Destroy fails explicitly if the provider configuration was removed or is incomplete. When identity changes trigger replacement, Read/Delete still use the current endpoint; ensure same-named paths there are safe to operate on, or restore the old endpoint and destroy first.
+- Sensitive and ordinary data sources and the ephemeral resource keep their existing single `values` map and `trim` behavior.
+
+### Removed
+
+- `data.ssh_conn` and the unified connection preflight. Remove its instances from state.
+- The object-valued `conn` argument. This is a breaking change with no state upgrade.
+
+### Migration
+
+- Move shared connection settings into `provider "ssh"`, or replace `conn = data.ssh_conn.X.conn` with a JSON override.
+- Wrap object overrides in `jsonencode()`, or use `provider::ssh::connection(host, user, port)` and let the provider supply credentials and host-key settings.
+- Remove `data.ssh_conn` from state and refresh. Managed paths keep their remote objects, but the resource `conn` attribute type changed, so re-apply or perform an explicit state migration.
+- Audit where private keys are stored: provider-level keys no longer enter consumer state; keys inside `conn` still do.
+
 ## 0.1.0 (2026-11-18)
 
 Initial release.

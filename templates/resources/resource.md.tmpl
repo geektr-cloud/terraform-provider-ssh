@@ -9,6 +9,8 @@ description: |-
 
 Manages a collection of independent remote files and directories over SSH. The resource owns only explicit paths. It never recursively owns or deletes remote content.
 
+Connection settings are optional. Omit `conn` to inherit the provider Connection Defaults, or set it to a Sensitive JSON object string to override individual fields. Omit, JSON `null`, and `{}` mean no override. The resource state keeps the raw override and a non-sensitive `connection_identity`; it never stores the provider-level private key. A private key written in `conn` is persisted. Changing the target or jump host/port/user replaces the resource; changing credentials, host-key settings, envs, timeouts, or retry delays updates in place. Destroy uses the current provider defaults plus the prior override, so removing the provider configuration or leaving it incomplete makes destroy fail explicitly.
+
 - `path` must be a cleaned absolute path and must not be `/`.
 - The final target must not be a symbolic link. Symlinks in ordinary parent paths are allowed.
 - If an unmanaged target already exists, apply fails unless `auto_import = true`. Adoption takes over the exact path and converges it to configuration; it does not adopt children recursively.
@@ -28,8 +30,16 @@ When an ordinary operation fails with a permission error, the resource retries t
 ## Example Usage
 
 ```hcl
+provider "ssh" {
+  host        = "example.internal"
+  port        = "22"
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
+  known_hosts = "~/.ssh/known_hosts"
+}
+
 resource "ssh_resource" "app" {
-  conn  = data.ssh_conn.server.conn
+  conn = jsonencode({ user = "deploy" })
   umask = "022"
 
   directory {

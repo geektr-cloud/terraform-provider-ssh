@@ -10,50 +10,50 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
 	"github.com/geektr-cloud/terraform-provider-ssh/internal/remote"
 )
 
-var _ resource.Resource = (*sshResource)(nil)
-var _ resource.ResourceWithModifyPlan = (*sshResource)(nil)
+var (
+	_ resource.Resource               = (*sshResource)(nil)
+	_ resource.ResourceWithModifyPlan = (*sshResource)(nil)
+	_ resource.ResourceWithConfigure  = (*sshResource)(nil)
+)
 
-type sshResource struct{}
+type sshResource struct {
+	defaults *providerDefaults
+}
 
 // sshResourceModel is the full resource state.
 type sshResourceModel struct {
-	Conn        types.Object `tfsdk:"conn"`
-	Umask       types.String `tfsdk:"umask"`
-	Owner       types.String `tfsdk:"owner"`
-	UID         types.Int64  `tfsdk:"uid"`
-	Group       types.String `tfsdk:"group"`
-	GID         types.Int64  `tfsdk:"gid"`
-	Directories types.List   `tfsdk:"directory"`
-	Files       types.List   `tfsdk:"file"`
+	Conn               types.String `tfsdk:"conn"`
+	ConnectionIdentity types.String `tfsdk:"connection_identity"`
+	Umask              types.String `tfsdk:"umask"`
+	Owner              types.String `tfsdk:"owner"`
+	UID                types.Int64  `tfsdk:"uid"`
+	Group              types.String `tfsdk:"group"`
+	GID                types.Int64  `tfsdk:"gid"`
+	Directories        types.List   `tfsdk:"directory"`
+	Files              types.List   `tfsdk:"file"`
 }
 
-func connectionFromObject(ctx context.Context, obj types.Object) (*ConnectionModel, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if obj.IsNull() {
-		diags.AddError("Missing connection profile", "`conn` is required.")
-		return nil, diags
+// Configure receives the provider-level Connection Defaults.
+func (r *sshResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
 	}
-	if obj.IsUnknown() {
-		diags.AddError("Unknown connection profile", "`conn` is not known during this operation.")
-		return nil, diags
+	defaults, ok := req.ProviderData.(*providerDefaults)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data", "The SSH provider received an unexpected provider data type.")
+		return
 	}
-	var m ConnectionModel
-	diags.Append(obj.As(ctx, &m, basetypes.ObjectAsOptions{})...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &m, diags
+	r.defaults = defaults
 }
 
 type directoryModel struct {
@@ -176,14 +176,14 @@ func (r *sshResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 	resp.Schema = schema.Schema{
 		Description: "Manages a collection of independent remote files and directories over SSH.",
 		Attributes: map[string]schema.Attribute{
-			"conn": schema.SingleNestedAttribute{
-				Required:    true,
+			"conn": schema.StringAttribute{
+				Optional:    true,
 				Sensitive:   true,
-				Description: "Connection Profile. Persisted and reconnected for every lifecycle operation.",
-				Attributes:  connInputAttributes(),
-				PlanModifiers: []planmodifier.Object{
-					connIdentityPlanModifier{},
-				},
+				Description: "Optional JSON Connection Override. Omit, null, or `{}` to use the provider defaults unchanged. Unknown fields, duplicate keys, arrays, scalars, and wrong value types are rejected. A private key written here is persisted in state.",
+			},
+			"connection_identity": schema.StringAttribute{
+				Computed:    true,
+				Description: "Non-sensitive canonical Connection Identity (target and jump host/port/user). A change replaces the resource.",
 			},
 			"umask": schema.StringAttribute{
 				Optional:    true,
@@ -209,97 +209,6 @@ func (r *sshResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 	}
 }
 
-// connIdentityPlanModifier replaces the resource when the connection identity
-// (target or jump host/port/user) changes. Credential-only changes keep the
-// remote paths.
-type connIdentityPlanModifier struct{}
-
-func (m connIdentityPlanModifier) Description(_ context.Context) string {
-	return "Replace the resource when the target or jump identity changes."
-}
-
-func (m connIdentityPlanModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m connIdentityPlanModifier) PlanModifyObject(ctx context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
-	if req.StateValue.IsNull() || req.StateValue.IsUnknown() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
-		return
-	}
-	if connectionIdentityUnknown(req.StateValue) || connectionIdentityUnknown(req.PlanValue) {
-		// An unknown identity cannot be compared. Do not plan a replacement
-		// based on a zero-value comparison; the apply will resolve it.
-		return
-	}
-	var before, after ConnectionModel
-	resp.Diagnostics.Append(req.StateValue.As(ctx, &before, basetypes.ObjectAsOptions{})...)
-	resp.Diagnostics.Append(req.PlanValue.As(ctx, &after, basetypes.ObjectAsOptions{})...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if connectionIdentityChanged(&before, &after) {
-		resp.RequiresReplace = true
-	}
-}
-
-// connectionIdentityUnknown reports whether any identity field used for
-// replacement is unknown. Jump is optional; an unknown jump object is unknown.
-func connectionIdentityUnknown(obj types.Object) bool {
-	attrs := obj.Attributes()
-	for _, name := range []string{"host", "port", "user"} {
-		if v, ok := attrs[name]; ok && v.IsUnknown() {
-			return true
-		}
-	}
-	jump, ok := attrs["jump"]
-	if !ok || jump.IsNull() {
-		return false
-	}
-	if jump.IsUnknown() {
-		return true
-	}
-	jumpObj, ok := jump.(types.Object)
-	if !ok {
-		return true
-	}
-	for _, name := range []string{"host", "port", "user"} {
-		if v, ok := jumpObj.Attributes()[name]; ok && v.IsUnknown() {
-			return true
-		}
-	}
-	return false
-}
-
-func connectionIdentityChanged(a, b *ConnectionModel) bool {
-	if identityStringUnknown(a.Host) || identityStringUnknown(a.Port) || identityStringUnknown(a.User) ||
-		identityStringUnknown(b.Host) || identityStringUnknown(b.Port) || identityStringUnknown(b.User) {
-		return false
-	}
-	if a.Host.ValueString() != b.Host.ValueString() ||
-		a.Port.ValueString() != b.Port.ValueString() ||
-		a.User.ValueString() != b.User.ValueString() {
-		return true
-	}
-	aJump, bJump := a.Jump, b.Jump
-	if (aJump == nil) != (bJump == nil) {
-		return true
-	}
-	if aJump != nil {
-		if identityStringUnknown(aJump.Host) || identityStringUnknown(aJump.Port) || identityStringUnknown(aJump.User) ||
-			identityStringUnknown(bJump.Host) || identityStringUnknown(bJump.Port) || identityStringUnknown(bJump.User) {
-			return false
-		}
-		if aJump.Host.ValueString() != bJump.Host.ValueString() ||
-			aJump.Port.ValueString() != bJump.Port.ValueString() ||
-			aJump.User.ValueString() != bJump.User.ValueString() {
-			return true
-		}
-	}
-	return false
-}
-
-func identityStringUnknown(v types.String) bool { return v.IsUnknown() }
-
 // ---- plan-time validation and write-only hash handling ----
 
 func (r *sshResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -317,7 +226,7 @@ func (r *sshResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 		return
 	}
 
-	resp.Diagnostics.Append(validateResourceModel(ctx, &cfgModel, false)...)
+	resp.Diagnostics.Append(validateResourceModel(ctx, &cfgModel, r.defaults, false)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -366,6 +275,33 @@ func (r *sshResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 		return
 	}
 	plan.Files = list
+
+	// Compare the Connection Identity from the prior state with the identity
+	// implied by the current provider defaults and configuration. Only the
+	// identity (target and jump host/port/user) forces replacement.
+	var prior sshResourceModel
+	if !req.State.Raw.IsNull() {
+		resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	if !cfgModel.Conn.IsUnknown() {
+		current, known, err := resolveConnIdentity(defaultsProfile(r.defaults), cfgModel.Conn)
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid connection override", err.Error())
+			return
+		}
+		priorIdentity := prior.ConnectionIdentity
+		if known && !priorIdentity.IsNull() && !priorIdentity.IsUnknown() && priorIdentity.ValueString() != "" {
+			if current != priorIdentity.ValueString() {
+				resp.RequiresReplace = append(resp.RequiresReplace, path.Root("conn"))
+			} else {
+				plan.ConnectionIdentity = priorIdentity
+			}
+		}
+	}
+
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
@@ -376,22 +312,16 @@ func hashString(s string) string {
 
 // validateResourceModel checks all configuration-only invariants. When
 // requireResolved is false, unknown values are skipped so plan-time validation
-// does not fail early.
-func validateResourceModel(ctx context.Context, m *sshResourceModel, requireResolved bool) diag.Diagnostics {
+// does not fail early. A known conn override is always parsed strictly.
+func validateResourceModel(ctx context.Context, m *sshResourceModel, defaults *providerDefaults, requireResolved bool) diag.Diagnostics {
 	var diags diag.Diagnostics
 
-	if m.Conn.IsNull() {
-		diags.AddError("Missing connection profile", "`conn` is required.")
-		return diags
-	}
 	if requireResolved {
-		connModel, d := connectionFromObject(ctx, m.Conn)
-		diags.Append(d...)
-		if !diags.HasError() {
-			if _, d := toClientConfig(ctx, connModel); d.HasError() {
-				diags.Append(d...)
-			}
+		if _, err := resolveConnConfig(defaultsProfile(defaults), m.Conn); err != nil {
+			diags.AddError("Invalid connection profile", err.Error())
 		}
+	} else if err := checkConnSyntax(m.Conn); err != nil {
+		diags.AddError("Invalid connection override", err.Error())
 	}
 	if err := validateOptionalExclusive(m.Owner, m.UID, "owner", "uid"); err != nil {
 		diags.AddError("Invalid ownership", err.Error())

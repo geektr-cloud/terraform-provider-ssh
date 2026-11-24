@@ -8,17 +8,18 @@ Provider address: `geektr-cloud/ssh`
 
 | Surface | Purpose |
 | --- | --- |
-| `data.ssh_conn` | Probe a connection and return a sensitive, persistable Connection Profile |
+| `provider "ssh"` | Optional Provider Connection Defaults shared by every consumer |
 | `resource.ssh_resource` | Manage independent remote files and directories |
 | `data.ssh_data` | Read files, run commands or scripts, persist ordinary results |
 | `data.ssh_sensitive_data` | Same operation model with all results marked sensitive; still persisted |
-| `ephemeral.ssh_data` | Same operation model, no persistence of results or profile |
+| `ephemeral.ssh_data` | Same operation model, no persistence of results or connection configuration |
+| `provider::ssh::connection` | Deterministic JSON override helper for a dynamic target |
 
-No provider function, connection pool, process-global map, or external daemon is implemented. Every Terraform lifecycle operation opens its own SSH connection and closes it afterwards.
+No connection probe, connection pool, process-global map, or external daemon is implemented. Every Terraform lifecycle operation opens its own SSH connection and closes it afterwards.
 
 ## Requirements
 
-- Terraform >= 1.11 or OpenTofu >= 1.11. `ssh_resource.file.content_wo` uses write-only attributes.
+- Terraform >= 1.11 or OpenTofu >= 1.11. `ssh_resource.file.content_wo` uses write-only attributes and provider functions require this baseline.
 - Remote Linux with GNU coreutils `install`, `timeout`, `mktemp`, and a POSIX `sh`.
 - Go 1.26.0 to build. The provider uses Terraform Plugin Framework v1.19.0.
 
@@ -30,7 +31,7 @@ Verified in this repository:
 | OpenTofu | 1.11.14, 1.13.9 |
 | Go | 1.26.0 toolchain building a `go 1.26.0` module; also verified with newer toolchains |
 
-The CLI matrix ran against real OpenSSH with apply, drift repair, an empty second plan, write-only/ephemeral data, and destroy.
+The CLI matrix runs against real OpenSSH with apply, drift repair, an empty second plan, write-only/ephemeral data, layered provider defaults, JSON overrides, the connection function, and destroy.
 
 ## Installation
 
@@ -39,21 +40,28 @@ terraform {
   required_providers {
     ssh = {
       source  = "geektr-cloud/ssh"
-      version = "~> 0.1"
+      version = "~> 0.2"
     }
   }
 }
 ```
 
-## Connection Profile
+## Layered connection configuration
+
+Connection settings live in two layers:
+
+1. Provider Connection Defaults (`provider "ssh"`), all fields optional.
+2. Connection Override (`conn` on a resource, data source, or ephemeral resource), a Sensitive JSON object string.
+
+Built-in defaults fill whatever remains.
 
 ```hcl
-data "ssh_conn" "server" {
+provider "ssh" {
   type        = "linux" # only supported value
-  host        = var.ssh_host
+  host        = "example.internal"
   port        = "22"
-  user        = var.ssh_user
-  private_key = file(var.ssh_private_key)
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
 
   known_hosts = "~/.ssh/known_hosts"
   envs        = { LANG = "C" }
@@ -62,34 +70,79 @@ data "ssh_conn" "server" {
 }
 
 resource "ssh_resource" "config" {
-  conn = data.ssh_conn.server.conn
-  # ...
+  # Optional JSON override. Omit it to inherit everything above.
+  conn = jsonencode({
+    user = "deploy"
+  })
+
+  file {
+    path    = "/etc/myapp/config.yaml"
+    content = "listen: 0.0.0.0:8080\n"
+    mode    = "0644"
+  }
 }
 ```
 
-`data.ssh_conn` completes a real SSH handshake and authentication, then closes the probe connection before returning `conn`. A configuration or credential error therefore blocks dependent resources from producing many parallel failures.
+`provider.Configure` performs no network I/O. It stores the defaults and performs configuration-only checks (supported type, port range, duration syntax, environment variable names, mutually exclusive host key modes).
 
-`conn` contains the full profile, including the private key. Consumers persist it and reconnect for every operation. Destroy works from prior state alone, including after the configuration that produced it is removed.
+### Merge rules
 
-Host verification modes are mutually exclusive:
+| Situation | Result |
+| --- | --- |
+| `conn` omitted, JSON `null`, or `{}` | No override; provider defaults unchanged |
+| Field absent from JSON | Inherit provider value |
+| Field explicitly `null` in JSON | Clear provider value and use the built-in default |
+| `envs` | Merge by key; same key wins; `null` clears all; `{}` adds nothing |
+| `jump` | Replace the whole jump profile; `null` removes it; no internal merge |
+| Explicit `known_hosts` or `host_key` | Select that host key mode and clear the other provider modes |
+| Explicit `insecure_ignore_host_key = true` | Select insecure mode and clear known_hosts/host_key |
+| Explicit `insecure_ignore_host_key = false` | Do not clear a provider-fixed host key mode |
+| No host key mode selected | `~/.ssh/known_hosts` |
+| Missing host, user, or private_key after merging | Error before dialing |
 
-- `known_hosts` (path, `~` expanded, file must exist)
-- `host_key` (inline authorized-key)
-- `insecure_ignore_host_key = true`
+Built-in defaults: `type = "linux"`, `port = "22"`, `timeout = "5m"`, `retry_delay = "5s"`, `envs = {}`, `insecure_ignore_host_key = false`.
 
-When all are omitted, `~/.ssh/known_hosts` is used. TOFU is not implemented. Authentication, host key, and configuration errors are not retried. Transient TCP/SSH network errors retry until the `timeout` budget is exhausted. Remote file and command operations do not retry automatically.
+`jump` is a single SSH hop, not a SOCKS5 or HTTP proxy. A jump profile contains host, port, user, private key, and host key settings. It cannot contain another jump, `envs`, `timeout`, or `retry_delay`.
 
-A single jump host can be configured with a nested `jump` object. The jump target is an SSH hop, not a SOCKS5 or HTTP proxy. It cannot contain another jump.
+### Strict JSON
 
-Encrypted private keys are supported through the `SSH_PROVIDER_PRIVATE_KEY_PASSPHRASE` environment variable. Passphrase material is never persisted by the provider.
+`conn` must be a JSON object or `null`. Arrays, scalars, unknown fields, duplicate keys at any level (including `jump` and `envs`), and wrong value types are rejected. Diagnostics report only the field path and error type. They never include the raw JSON, a private key, or any secret value.
+
+Unknown `conn` values are deferred to execution and must be known before any dial.
+
+### Provider function
+
+```hcl
+resource "ssh_resource" "dynamic" {
+  conn = provider::ssh::connection(var.target_host, "deploy", var.target_port)
+
+  file {
+    path    = "/opt/app/marker"
+    content = "managed\n"
+    mode    = "0644"
+  }
+}
+```
+
+`provider::ssh::connection(host, user, port)` returns exactly `{"host":...,"user":...,"port":...}`. It is deterministic, performs no network access, does not read provider configuration, and never accepts key material.
+
+### Connection identity and replacement
+
+`ssh_resource.connection_identity` is a non-sensitive canonical encoding of the target and jump host/port/user. A change replaces the resource. Credential, host-key, `envs`, `timeout`, and `retry_delay` changes update in place.
+
+Read reconnects with the current provider defaults plus the prior JSON override and preserves the prior identity so the next plan can detect provider default changes. If an identity field is unknown during plan, the provider skips the comparison rather than treating unknown as an empty string.
+
+Destroy also uses the current provider defaults plus the prior override. Destroying after removing the provider block, or with defaults that no longer supply missing fields, fails explicitly. When an identity change triggers replacement, Read and Delete still use the **current** endpoint, not the prior `connection_identity`. Before replacing an endpoint, ensure that paths with the same names on the new endpoint are safe to refresh and delete; otherwise restore the old endpoint and destroy first.
 
 ## Security and state
 
 | Value | Display | Plan/state |
 | --- | --- | --- |
-| `data.ssh_conn.private_key`, `data.ssh_conn.conn` | Sensitive | Persisted, contains private key |
-| `ssh_resource.conn`, `data.ssh_data.conn`, `data.ssh_sensitive_data.conn` | Sensitive | Persisted, contains private key |
-| `ephemeral.ssh_data.conn` and results | Ephemeral | Not persisted |
+| Provider `private_key` and other provider defaults | Sensitive where applicable | Not copied into consumer state |
+| Consumer `conn` JSON | Sensitive | Persisted by ordinary resource/data sources |
+| Private key written inside `conn` | Sensitive | Persisted with that override |
+| `ssh_resource.connection_identity` | Normal computed | Persisted |
+| `ephemeral.ssh_data` configuration and results | Ephemeral | Not persisted |
 | `data.ssh_data.values` | Normal | Persisted |
 | `data.ssh_sensitive_data.values` | Sensitive | Persisted |
 | `ephemeral.ssh_data.values` | Sensitive | Not persisted |
@@ -97,25 +150,22 @@ Encrypted private keys are supported through the `SSH_PROVIDER_PRIVATE_KEY_PASSP
 | `file.content_wo` | Write-only | Plaintext not persisted |
 | `file.content_sha256` | Normal computed | Persisted digest |
 
-**Sensitive is not encryption.** It only redacts CLI display. Plan files and state still contain the private key, `data.ssh_sensitive_data.values`, and ordinary data-source results. Use encrypted remote state, restricted access, and short-lived keys.
+**Sensitive is not encryption.** It only redacts CLI display. Plan files and state still contain the `conn` JSON (including any private key written there), `data.ssh_sensitive_data.values`, and ordinary data-source results. Use encrypted remote state, restricted access, and short-lived keys.
+
+Provider-level private keys are not written to resource or data source state. A private key placed in a consumer's `conn` JSON is written to that consumer's state and plan. Prefer provider defaults for shared credentials.
 
 `content_wo` is never written to plan or state. Only its SHA-256 digest is persisted as `content_sha256`. The digest is a content identity, not a secret: low-entropy values can be guessed offline. `content_wo` must be stable between plan and apply. Literals, ordinary variables, and stable ephemeral variables work. Ephemeral resources that change on every phase are not supported.
 
-### Key rotation limitation
+Encrypted private keys are supported through the `SSH_PROVIDER_PRIVATE_KEY_PASSPHRASE` environment variable. Passphrase material is never persisted by the provider.
 
-Refresh uses the private key stored in prior state. If that key has been revoked, `terraform plan`, `terraform refresh`, and `terraform destroy` cannot authenticate. To rotate:
+### Credential rotation
 
-```sh
-terraform apply -refresh=false
-```
-
-or update the state credential through a controlled state migration before refreshing. The same limitation applies to destroy: if the stored credential is invalid, restore a valid credential in state first.
+Read and destroy use the current provider defaults plus the prior override. Rotating the provider-level private key therefore affects the next refresh without rewriting resource state. If a private key that is persisted inside `conn` is revoked, refresh and destroy can no longer authenticate. Update that override (for example with `terraform apply -refresh=false`) or perform a controlled state update before refreshing.
 
 ## `ssh_resource`
 
 ```hcl
 resource "ssh_resource" "app" {
-  conn  = data.ssh_conn.server.conn
   umask = "022"
 
   directory {
@@ -160,7 +210,7 @@ When a normal operation fails with a permission error, the resource retries the 
 
 ```hcl
 data "ssh_data" "inspect" {
-  conn    = data.ssh_conn.server.conn
+  conn    = jsonencode({ user = "auditor" })
   sudo    = false
   timeout = "5m"
 
@@ -189,8 +239,6 @@ data "ssh_data" "inspect" {
 }
 
 data "ssh_sensitive_data" "credential" {
-  conn = data.ssh_conn.server.conn
-
   file {
     key  = "token"
     path = "/run/secrets/api-token"
@@ -210,7 +258,7 @@ All three surfaces use the same connection, sudo, timeout, and operation model. 
 - Operations run by ascending index. Same-index operations use a deterministic provider order. First failure aborts the whole operation and returns no partial map.
 - `command` is a non-empty argv. Arguments are shell-quoted one by one; shell operators inside an argument are not interpreted.
 - `run` feeds the script body to the configured interpreter over stdin (`<shell> -s`), so no script file is written to the remote filesystem and the script does not appear in the remote process argv.
-- `command` uses `conn.envs`; `run` merges `conn.envs` with block `envs` (block wins). File reads do not use envs.
+- `command` uses the merged connection envs; `run` merges those with block `envs` (block wins). File reads do not use envs.
 - Sudo is explicit: set it on the data source or per operation. It never escalates implicitly.
 - File contents and stdout must be valid UTF-8. Trailing newlines are preserved.
 - Every operation writes to `values`. There is no block-level `sensitive` argument and no `sensitive_values` map. Empty result sets are empty maps, not null.
@@ -219,18 +267,38 @@ All three surfaces use the same connection, sudo, timeout, and operation model. 
 
 `data.ssh_sensitive_data` marks the whole `values` map Sensitive for CLI display. It is still an ordinary data source: results are written to plan and state. Sensitive is not encryption. Put operations with sensitive results here instead of `data.ssh_data`.
 
-`ephemeral.ssh_data` has the same operation model. Its results and profile are not stored in plan or state. It is suitable for write-only inputs such as `content_wo`.
+`ephemeral.ssh_data` has the same operation model. Its results and connection configuration are not stored in plan or state. It is suitable for write-only inputs such as `content_wo`.
 
-### Migration from block-level sensitivity
+## Migration from 0.1
 
-Earlier versions accepted `sensitive = true` inside `file`, `command`, and `run` blocks and returned sensitive results in a `sensitive_values` map. Both were removed:
+`data.ssh_conn` and object-valued `conn` were removed. There is no automatic state upgrade.
 
-1. Move configurations that produced sensitive results from `data.ssh_data` to `data.ssh_sensitive_data`.
-2. Remove every block-level `sensitive` argument. For `ephemeral.ssh_data`, remove it as well; every result is sensitive there.
-3. Replace `.sensitive_values["key"]` with `.values["key"]`.
-4. Refresh state. Data source and ephemeral resource schemas cannot be versioned, so there is no automatic state upgrade.
+1. Move connection settings into the `provider "ssh"` block, or replace `conn = data.ssh_conn.X.conn` with a JSON override.
+2. Wrap object overrides in `jsonencode()`, or use `provider::ssh::connection(host, user, port)` plus provider defaults:
 
-`trim` defaults to `true` and removes leading and trailing whitespace. Configurations that relied on exact output, especially a trailing newline, must set `trim = false` explicitly. This default applies retroactively to existing configurations.
+   ```hcl
+   # Before
+   conn = {
+     host        = "example.internal"
+     port        = "22"
+     user        = "deploy"
+     private_key = var.private_key
+   }
+
+   # After
+   conn = jsonencode({
+     host        = "example.internal"
+     port        = "22"
+     user        = "deploy"
+   })
+   ```
+
+3. Run `terraform state rm` for the removed `data.ssh_conn` instances, then refresh. Managed resources keep their paths; resource state from 0.1 cannot be reused because the `conn` attribute type changed, so re-apply or perform an explicit state migration.
+4. Replace references to `data.ssh_conn.X.conn` with either the new `conn` JSON string or `null`.
+5. Review where private keys are stored. Provider-level keys are no longer copied into consumer state; keys inside `conn` still are.
+6. Data source and ephemeral schemas cannot be versioned. Update configuration and refresh.
+
+The previous migration from block-level `sensitive` to `data.ssh_sensitive_data`, `.values`, and `trim` remains in effect.
 
 ## Output limit
 
@@ -258,7 +326,7 @@ TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./internal/prov
 
 The harness in `terraform-plugin-testing` v1.14.1 is Terraform-specific. OpenTofu is verified through the CLI with the same provider build and a `dev_overrides` configuration; the repository does not claim an automated OpenTofu acceptance matrix until CI adds it.
 
-Manual Docker-based end-to-end tests run real Terraform/OpenTofu CLIs against OpenSSH, including non-root sudo and negative lifecycle scenarios:
+Manual Docker-based end-to-end tests run real Terraform/OpenTofu CLIs against OpenSSH, including non-root sudo, provider defaults, JSON overrides, the connection function, and negative lifecycle scenarios:
 
 ```sh
 ./e2e/run.sh

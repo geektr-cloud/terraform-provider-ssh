@@ -27,25 +27,29 @@ type Server struct {
 	Client     ssh.Signer
 	KnownHosts string
 
-	privateKey ed25519.PrivateKey
-	listener   net.Listener
-	config     *ssh.ServerConfig
-	wg         sync.WaitGroup
-	closed     atomic.Bool
+	privateKey   ed25519.PrivateKey
+	altClientKey ed25519.PrivateKey
+	listener     net.Listener
+	config       *ssh.ServerConfig
+	wg           sync.WaitGroup
+	closed       atomic.Bool
 	// Connections counts accepted TCP connections.
 	Connections atomic.Int32
 }
 
 // Start creates a server listening on 127.0.0.1. The server accepts only the
-// client key returned in Server.Client.
+// client key returned in Server.Client and the alternate key returned by
+// AltPrivateKeyPEM.
 func Start(t *testing.T) *Server {
 	t.Helper()
 	_, host := generateSigner(t)
 	clientKey, clientSigner := generateSigner(t)
+	altClientKey, altSigner := generateSigner(t)
 
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			if string(key.Marshal()) == string(clientSigner.PublicKey().Marshal()) {
+			if string(key.Marshal()) == string(clientSigner.PublicKey().Marshal()) ||
+				string(key.Marshal()) == string(altSigner.PublicKey().Marshal()) {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("unknown public key")
@@ -58,12 +62,13 @@ func Start(t *testing.T) *Server {
 		t.Fatalf("listen: %v", err)
 	}
 	s := &Server{
-		Addr:       ln.Addr().String(),
-		Host:       host,
-		Client:     clientSigner,
-		privateKey: clientKey,
-		listener:   ln,
-		config:     cfg,
+		Addr:         ln.Addr().String(),
+		Host:         host,
+		Client:       clientSigner,
+		privateKey:   clientKey,
+		altClientKey: altClientKey,
+		listener:     ln,
+		config:       cfg,
 	}
 	s.KnownHosts = knownhosts.Line([]string{knownhosts.Normalize(s.Addr)}, host.PublicKey())
 	t.Cleanup(s.Close)
@@ -93,7 +98,19 @@ func (s *Server) HostKeyString() string {
 // PrivateKeyPEM returns the client key in OpenSSH PEM format.
 func (s *Server) PrivateKeyPEM(t *testing.T) string {
 	t.Helper()
-	block, err := ssh.MarshalPrivateKey(s.privateKey, "")
+	return marshalPrivateKey(t, s.privateKey)
+}
+
+// AltPrivateKeyPEM returns a second authorized client key, used to test
+// credential rotation without changing the Connection Identity.
+func (s *Server) AltPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+	return marshalPrivateKey(t, s.altClientKey)
+}
+
+func marshalPrivateKey(t *testing.T, key ed25519.PrivateKey) string {
+	t.Helper()
+	block, err := ssh.MarshalPrivateKey(key, "")
 	if err != nil {
 		t.Fatalf("marshal private key: %v", err)
 	}

@@ -409,6 +409,31 @@ scan_state_for_writeonly() {
     done
 }
 
+assert_state_without_provider_key() {
+    dir=$1
+    for f in "$dir/terraform.tfstate" "$dir/terraform.tfstate.backup"; do
+        [ -f "$f" ] || continue
+        if grep -F -q -- 'private_key' "$f"; then
+            fail "state $f contains provider private key material"
+        fi
+        if grep -F -q -- 'PRIVATE KEY' "$f"; then
+            fail "state $f contains private key material"
+        fi
+    done
+}
+
+assert_state_with_json_key() {
+    dir=$1
+    f="$dir/terraform.tfstate"
+    [ -f "$f" ] || fail "state file $f does not exist"
+    if ! grep -F -q -- 'private_key' "$f"; then
+        fail "state $f does not contain the explicitly configured JSON private_key"
+    fi
+    if ! grep -F -q -- 'PRIVATE KEY' "$f"; then
+        fail "state $f does not contain the explicitly configured JSON private key content"
+    fi
+}
+
 scan_logs() {
     dir=$1
     secret=$2
@@ -471,10 +496,13 @@ run_basic() {
     assert_output "$work" run_value "$run_token"
     assert_output "$work" padded_value "padded"
     assert_output_exact "$work" keep_newline_value $'keep-newline\n'
+    assert_output "$work" override_value "json-override"
+    assert_output "$work" function_value "function-value"
     assert_output "$work" sensitive_seed_value "$seed_token"
     assert_output "$work" sensitive_padded_value "secret-padded"
     assert_output "$work" wo_digest "$digest"
 
+    assert_state_without_provider_key "$work"
     scan_state_for_writeonly "$work" "$current_wo_token"
     plan_expect 0 "$logs/plan-stable.log" "$work/plan-stable.bin" "$work" "$var_file"
     scan_plan_for_writeonly "$work" "$work/plan-stable.bin" "$current_wo_token" "$work/plan-stable.json"
@@ -499,6 +527,27 @@ run_basic() {
     assert_remote_missing "$root_base/dir"
     assert_remote_missing "$public_base/dir/hello.txt"
     assert_remote_missing "$public_base/dir"
+}
+
+run_json_private_key() {
+    logs=$current_logs/json-private-key
+    mkdir -p "$logs"
+    work="$current_work/json-private-key"
+    mkdir -p "$work"
+    cp -R "$script_dir/fixtures/json-private-key/." "$work/"
+    target="/tmp/tf-ssh-e2e-$session-$current_tool-json-key.txt"
+    var_file="$work/e2e.tfvars"
+    : >"$var_file"
+    append_conn_tfvars "$var_file"
+    printf 'path = "%s"\n' "$target" >>"$var_file"
+    chmod 0600 "$var_file"
+
+    printf 'e2e: explicit JSON private_key is persisted\n'
+    invoke "$work" "$logs/apply.log" "$current_bin" apply -auto-approve -input=false -var-file="$var_file"
+    assert_remote_content "$target" "json-key"
+    assert_state_with_json_key "$work"
+    invoke "$work" "$logs/destroy.log" "$current_bin" destroy -auto-approve -input=false -var-file="$var_file"
+    assert_remote_missing "$target"
 }
 
 run_negative_existing() {
@@ -619,6 +668,7 @@ run_tool() {
     printf '\ne2e: ===== %s (%s) =====\n' "$current_tool" "$version"
 
     run_basic "$current_tool"
+    run_json_private_key
     run_negative_existing
     run_negative_autoimport
     run_negative_nonempty

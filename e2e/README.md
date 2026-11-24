@@ -10,7 +10,9 @@ references this directory.
 
 `fixtures/basic` applies a full configuration and then verifies remote state:
 
-- `data.ssh_conn` connection probe.
+- Provider Connection Defaults with a real private key; consumers inherit them.
+- A partial JSON `conn` override (explicit host/user) and a
+  `provider::ssh::connection(...)` call for a second consumer.
 - `ssh_resource` managed directory, ordinary `content` file, and write-only
   `content_wo` file whose value comes from `ephemeral.ssh_data`.
 - `data.ssh_data` file read, `command` argv, and `run` script over stdin.
@@ -28,6 +30,10 @@ references this directory.
   2, and an apply that repairs both.
 - Destroy and post-destroy absence checks.
 - State and plan inspection: the write-only plaintext must not appear.
+- State inspection: the provider-level private key must not appear.
+- `fixtures/json-private-key`: a private key explicitly written in `conn` is
+  persisted in resource state, proving the documented difference from provider
+  defaults.
 - Log inspection: no private key material and no write-only plaintext.
 
 Negative fixtures cover:

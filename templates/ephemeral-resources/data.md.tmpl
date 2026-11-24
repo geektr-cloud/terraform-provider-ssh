@@ -2,12 +2,12 @@
 page_title: "ssh_data Ephemeral Resource - {{.ProviderName}}"
 subcategory: ""
 description: |-
-  Reads remote files and executes commands over SSH without persisting the connection profile or results.
+  Reads remote files and executes commands over SSH without persisting the connection override or results.
 ---
 
 # ssh_data (Ephemeral Resource)
 
-Reads remote files and executes commands or scripts over SSH using the same operation model as `data.ssh_data`. Ephemeral results and the Connection Profile are not persisted in the plan or state.
+Reads remote files and executes commands or scripts over SSH using the same operation model as `data.ssh_data`. Ephemeral results and the Connection Override are not persisted in the plan or state. Omit `conn` to inherit the provider defaults.
 
 Every operation writes its result to `values`. The `values` map is statically marked Sensitive for display, so CLI output redacts it. There is no per-operation `sensitive` argument and no `sensitive_values` map. All operations suppress remote stderr and error details in diagnostics.
 
@@ -20,9 +20,14 @@ Use this surface for values that must not be written to Terraform state. It can 
 ## Example Usage
 
 ```hcl
-ephemeral "ssh_data" "secret" {
-  conn = data.ssh_conn.server.conn
+provider "ssh" {
+  host        = "example.internal"
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
+  known_hosts = "~/.ssh/known_hosts"
+}
 
+ephemeral "ssh_data" "secret" {
   file {
     key  = "token"
     path = "/run/secrets/token"
@@ -30,8 +35,6 @@ ephemeral "ssh_data" "secret" {
 }
 
 resource "ssh_resource" "token_copy" {
-  conn = data.ssh_conn.server.conn
-
   file {
     path       = "/etc/myapp/token"
     content_wo = ephemeral.ssh_data.secret.values["token"]

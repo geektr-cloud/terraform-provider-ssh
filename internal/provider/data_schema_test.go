@@ -86,7 +86,7 @@ func TestEphemeralValuesSensitivity(t *testing.T) {
 
 func TestProviderRegistersDataSources(t *testing.T) {
 	p := New("test")()
-	want := map[string]bool{"ssh_conn": false, "ssh_data": false, "ssh_sensitive_data": false}
+	want := map[string]bool{"ssh_data": false, "ssh_sensitive_data": false}
 	for _, factory := range p.DataSources(context.Background()) {
 		var resp datasource.MetadataResponse
 		factory().Metadata(context.Background(), datasource.MetadataRequest{ProviderTypeName: "ssh"}, &resp)
@@ -99,5 +99,27 @@ func TestProviderRegistersDataSources(t *testing.T) {
 		if !found {
 			t.Fatalf("data source %q is not registered", name)
 		}
+	}
+}
+
+func TestConsumerConnIsOptionalSensitiveString(t *testing.T) {
+	var dataResp datasource.SchemaResponse
+	(&sshDataDataSource{}).Schema(context.Background(), datasource.SchemaRequest{}, &dataResp)
+	conn, ok := dataResp.Schema.Attributes["conn"].(datasourceschema.StringAttribute)
+	if !ok {
+		t.Fatalf("data conn is %T, want StringAttribute", dataResp.Schema.Attributes["conn"])
+	}
+	if !conn.Optional || !conn.Sensitive {
+		t.Fatal("data conn must be optional and sensitive")
+	}
+
+	var ephemeralResp ephemeral.SchemaResponse
+	(&sshDataEphemeralResource{}).Schema(context.Background(), ephemeral.SchemaRequest{}, &ephemeralResp)
+	econn, ok := ephemeralResp.Schema.Attributes["conn"].(ephemeralschema.StringAttribute)
+	if !ok {
+		t.Fatalf("ephemeral conn is %T, want StringAttribute", ephemeralResp.Schema.Attributes["conn"])
+	}
+	if !econn.Optional || !econn.Sensitive {
+		t.Fatal("ephemeral conn must be optional and sensitive")
 	}
 }

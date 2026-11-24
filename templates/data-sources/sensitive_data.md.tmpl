@@ -9,6 +9,8 @@ description: |-
 
 Reads remote files and executes commands or scripts over SSH using the same connection, sudo, timeout, and operation model as `data.ssh_data`. Every result is written to `values`, which is statically marked Sensitive for CLI display.
 
+Connection settings are optional here. Omit `conn` to inherit the provider Connection Defaults; set it to a Sensitive JSON object string to override individual fields. A provider-level private key is not persisted; a private key written in `conn` is.
+
 This data source has no `sensitive` argument and no separate result map. It always suppresses remote stderr and error details in diagnostics, so failures cannot leak sensitive command output; exit status is still reported.
 
 !> **Sensitive is not encryption.** This is an ordinary data source: `values` is persisted in Terraform plan and state, including any file content, command stdout, or script stdout. Use encrypted remote state and restricted access. Use `ephemeral.ssh_data` when results must not be persisted.
@@ -25,9 +27,14 @@ The per-item output limit is 512 KiB by default. It can be changed only through 
 ## Example Usage
 
 ```hcl
-data "ssh_sensitive_data" "credential" {
-  conn = data.ssh_conn.server.conn
+provider "ssh" {
+  host        = "example.internal"
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
+  known_hosts = "~/.ssh/known_hosts"
+}
 
+data "ssh_sensitive_data" "credential" {
   file {
     key  = "token"
     path = "/run/secrets/api-token"

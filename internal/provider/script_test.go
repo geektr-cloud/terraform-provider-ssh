@@ -48,7 +48,6 @@ func TestExecuteScriptUsesStdin(t *testing.T) {
 
 func TestOpsRunScript(t *testing.T) {
 	server := testsupport.Start(t)
-	host, port, _ := net.SplitHostPort(server.Addr)
 	runObj := types.ObjectValueMust(runOperationAttrTypes(), map[string]attr.Value{
 		"key":     types.StringValue("run"),
 		"script":  types.StringValue("printf 'run data'"),
@@ -60,24 +59,13 @@ func TestOpsRunScript(t *testing.T) {
 		"timeout": types.StringNull(),
 	})
 	model := OpsModel{
-		Conn: &ConnectionModel{
-			Type:                  types.StringValue("linux"),
-			Host:                  types.StringValue(host),
-			Port:                  types.StringValue(port),
-			User:                  types.StringValue("tester"),
-			PrivateKey:            types.StringValue(server.PrivateKeyPEM(t)),
-			KnownHosts:            types.StringNull(),
-			HostKey:               types.StringNull(),
-			InsecureIgnoreHostKey: types.BoolValue(true),
-			Envs:                  types.MapValueMust(types.StringType, map[string]attr.Value{}),
-			Timeout:               types.StringValue("5s"),
-			RetryDelay:            types.StringValue("50ms"),
-		},
+		Conn:     types.StringNull(),
 		Sudo:     types.BoolValue(false),
 		Timeout:  types.StringValue("5s"),
 		Files:    types.ListNull(types.ObjectType{AttrTypes: fileOperationAttrTypes()}),
 		Commands: types.ListNull(types.ObjectType{AttrTypes: commandOperationAttrTypes()}),
 		Runs:     types.ListValueMust(types.ObjectType{AttrTypes: runOperationAttrTypes()}, []attr.Value{runObj}),
+		defaults: testServerDefaults(t, server),
 	}
 	_, _, runs, dd := model.decodeOperations(context.Background())
 	if dd.HasError() {

@@ -1,4 +1,4 @@
-data "ssh_conn" "server" {
+provider "ssh" {
   host        = "example.internal"
   user        = "deploy"
   private_key = file("~/.ssh/id_ed25519")
@@ -6,8 +6,6 @@ data "ssh_conn" "server" {
 }
 
 data "ssh_sensitive_data" "credential" {
-  conn = data.ssh_conn.server.conn
-
   file {
     key  = "token"
     path = "/run/secrets/api-token"

@@ -8,52 +8,39 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-var _ ephemeral.EphemeralResource = (*sshDataEphemeralResource)(nil)
+var (
+	_ ephemeral.EphemeralResource              = (*sshDataEphemeralResource)(nil)
+	_ ephemeral.EphemeralResourceWithConfigure = (*sshDataEphemeralResource)(nil)
+)
 
-type sshDataEphemeralResource struct{}
+type sshDataEphemeralResource struct {
+	defaults *providerDefaults
+}
 
 func (e *sshDataEphemeralResource) Metadata(_ context.Context, req ephemeral.MetadataRequest, resp *ephemeral.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_data"
 }
 
-func ephemeralConnProfileAttributes() map[string]schema.Attribute {
-	return map[string]schema.Attribute{
-		"type":                     schema.StringAttribute{Optional: true, Description: "Target type. Only linux is supported."},
-		"host":                     schema.StringAttribute{Required: true, Description: "Target host."},
-		"port":                     schema.StringAttribute{Optional: true, Description: "Target port. Defaults to 22."},
-		"user":                     schema.StringAttribute{Required: true, Description: "Target user."},
-		"private_key":              schema.StringAttribute{Required: true, Sensitive: true, Description: "Inline private key."},
-		"known_hosts":              schema.StringAttribute{Optional: true, Description: "known_hosts path."},
-		"host_key":                 schema.StringAttribute{Optional: true, Description: "Inline fixed host key."},
-		"insecure_ignore_host_key": schema.BoolAttribute{Optional: true, Description: "Skip host key verification."},
-		"envs":                     schema.MapAttribute{Optional: true, ElementType: types.StringType, Description: "Default environment variables."},
-		"timeout":                  schema.StringAttribute{Optional: true, Description: "Dial budget. Defaults to 5m."},
-		"retry_delay":              schema.StringAttribute{Optional: true, Description: "Retry delay. Defaults to 5s."},
-		"jump": schema.SingleNestedAttribute{
-			Optional:    true,
-			Description: "Optional single jump host.",
-			Attributes: map[string]schema.Attribute{
-				"host":                     schema.StringAttribute{Required: true, Description: "Jump host."},
-				"port":                     schema.StringAttribute{Optional: true, Description: "Jump port."},
-				"user":                     schema.StringAttribute{Required: true, Description: "Jump user."},
-				"private_key":              schema.StringAttribute{Required: true, Sensitive: true, Description: "Jump private key."},
-				"known_hosts":              schema.StringAttribute{Optional: true, Description: "Jump known_hosts."},
-				"host_key":                 schema.StringAttribute{Optional: true, Description: "Jump inline host key."},
-				"insecure_ignore_host_key": schema.BoolAttribute{Optional: true, Description: "Skip jump verification."},
-			},
-		},
+// Configure receives the provider-level Connection Defaults.
+func (e *sshDataEphemeralResource) Configure(_ context.Context, req ephemeral.ConfigureRequest, resp *ephemeral.ConfigureResponse) {
+	defaults, ok := providerDefaultsFromData(req.ProviderData)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data", "The SSH provider received an unexpected provider data type.")
+		return
+	}
+	if defaults != nil {
+		e.defaults = defaults
 	}
 }
 
 func (e *sshDataEphemeralResource) Schema(_ context.Context, _ ephemeral.SchemaRequest, resp *ephemeral.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Reads files and executes commands over SSH without persisting the connection profile or results.",
+		Description: "Reads files and executes commands over SSH without persisting the connection override or results.",
 		Attributes: map[string]schema.Attribute{
-			"conn": schema.SingleNestedAttribute{
-				Required:    true,
+			"conn": schema.StringAttribute{
+				Optional:    true,
 				Sensitive:   true,
-				Description: "Connection Profile used to establish a fresh connection.",
-				Attributes:  ephemeralConnProfileAttributes(),
+				Description: "Optional JSON Connection Override. Omit, null, or `{}` to use the provider defaults unchanged. Ephemeral values are never persisted.",
 			},
 			"sudo":    schema.BoolAttribute{Optional: true, Description: "Default for operations that do not override it."},
 			"timeout": schema.StringAttribute{Optional: true, Description: "Default per-operation timeout. Defaults to 5m."},
@@ -110,6 +97,7 @@ func (e *sshDataEphemeralResource) Open(ctx context.Context, req ephemeral.OpenR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	model.defaults = e.defaults
 	values, diags := model.Execute(ctx, true)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {

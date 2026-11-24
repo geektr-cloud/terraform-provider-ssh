@@ -33,9 +33,9 @@ variable "path" {
   type = string
 }
 
-# private_key is deliberately unauthorized. The connection probe must fail
-# before the resource creates anything.
-data "ssh_conn" "target" {
+# private_key is deliberately unauthorized. The resource fails authentication
+# directly; there is no unified connection probe any more.
+provider "ssh" {
   host        = var.host
   port        = var.port
   user        = var.ssh_user
@@ -46,8 +46,6 @@ data "ssh_conn" "target" {
 }
 
 resource "ssh_resource" "unauthorized" {
-  conn = data.ssh_conn.target.conn
-
   file {
     path    = var.path
     content = "must-not-exist"

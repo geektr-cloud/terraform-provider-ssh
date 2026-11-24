@@ -18,14 +18,12 @@ import (
 // the configuration-as-source-of-truth paths without fabricating a provider.
 func TestAccConfigValuesUnknownAtPlan(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
-	altConn := strings.Replace(conn, `data "ssh_conn" "test"`, `data "ssh_conn" "alt"`, 1)
-	conns := conn + "\n" + altConn
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 
-	config := testAccProviderConfig(conns, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "unknown" {
-  conn  = timestamp() != "" ? data.ssh_conn.test.conn : data.ssh_conn.alt.conn
+  conn  = timestamp() != "" ? null : jsonencode({ user = "tester" })
   umask = timestamp() != "" ? "027" : "022"
 
   directory {
@@ -91,13 +89,12 @@ resource "ssh_resource" "unknown" {
 
 func TestAccInvalidOutputLimitHasNoSideEffects(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	file := filepath.Join(t.TempDir(), "never.txt")
 	t.Setenv(outputLimitEnv, "not-a-number")
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   file {
     path    = %q
     content = "content"
@@ -121,13 +118,12 @@ resource "ssh_resource" "test" {
 
 func TestAccOversizedPlainContentHasNoSideEffects(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	file := filepath.Join(t.TempDir(), "too-big.txt")
 	t.Setenv(outputLimitEnv, "4")
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   file {
     path    = %q
     content = "12345"
@@ -151,13 +147,12 @@ resource "ssh_resource" "test" {
 
 func TestAccWriteOnlyContentIsNotLimited(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	file := filepath.Join(t.TempDir(), "write-only.txt")
 	t.Setenv(outputLimitEnv, "4")
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   file {
     path       = %q
     content_wo = "123456789"

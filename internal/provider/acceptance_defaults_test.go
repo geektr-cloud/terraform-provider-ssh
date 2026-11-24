@@ -27,7 +27,7 @@ func TestAccInlineConnectionDefaults(t *testing.T) {
 provider "ssh" {}
 
 resource "ssh_resource" "inline" {
-  conn = {
+  conn = jsonencode({
     host        = %q
     port        = %q
     user        = "tester"
@@ -35,7 +35,7 @@ resource "ssh_resource" "inline" {
 %s
 EOT
     host_key    = %q
-  }
+  })
 
   file {
     path    = %q
@@ -79,14 +79,13 @@ func TestAccTopLevelOwnershipDefaults(t *testing.T) {
 		t.Skip("root-created test files would not prove inheritance")
 	}
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	file := filepath.Join(base, "owned.txt")
 	uid, gid := os.Getuid(), os.Getgid()
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn = data.ssh_conn.test.conn
   uid  = %d
   gid  = %d
 
@@ -130,14 +129,13 @@ resource "ssh_resource" "test" {
 
 func TestAccDefaultModesAndUmask(t *testing.T) {
 	server := testsupport.Start(t)
-	conn := testAccConn(t, server)
+	providerBlock := testAccProviderHCL(t, server)
 	base := t.TempDir()
 	dir := filepath.Join(base, "defaults")
 	file := filepath.Join(dir, "file")
 
-	config := testAccProviderConfig(conn, fmt.Sprintf(`
+	config := testAccProviderConfig(providerBlock, fmt.Sprintf(`
 resource "ssh_resource" "test" {
-  conn  = data.ssh_conn.test.conn
   umask = "027"
 
   directory {

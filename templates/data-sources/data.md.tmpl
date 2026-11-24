@@ -9,6 +9,8 @@ description: |-
 
 Reads remote files and executes commands or scripts over SSH. Each read establishes a fresh SSH connection and closes it when the operation finishes.
 
+Connection settings are optional here. Omit `conn` to inherit the provider Connection Defaults. Set `conn` to a Sensitive JSON object string to override only the fields that differ. Omit, JSON `null`, and `{}` all mean "no override". Unknown fields, duplicate keys, arrays, scalars, and wrong value types are rejected. A private key written in `conn` is persisted with this data source; a provider-level private key is not.
+
 Every operation writes its result to `values`, keyed by the operation's `key`. This data source has no per-operation `sensitive` flag and no `sensitive_values` map: results are persisted in state as ordinary values.
 
 If any result is sensitive, use `data.ssh_sensitive_data` instead. It has the same connection, sudo, timeout, and operation configuration, marks `values` sensitive for display, and suppresses remote stderr in error diagnostics.
@@ -26,8 +28,16 @@ The per-item output limit is 512 KiB by default. It can be changed only through 
 ## Example Usage
 
 ```hcl
+provider "ssh" {
+  host        = "example.internal"
+  user        = "deploy"
+  private_key = file("~/.ssh/id_ed25519")
+  known_hosts = "~/.ssh/known_hosts"
+}
+
 data "ssh_data" "inspect" {
-  conn = data.ssh_conn.server.conn
+  # Optional JSON override; all other fields inherit the provider defaults.
+  conn = jsonencode({ user = "auditor" })
 
   file {
     key  = "config"

@@ -1,0 +1,32 @@
+---
+page_title: "connection Function - {{.ProviderName}}"
+subcategory: ""
+description: |-
+  Returns a JSON object with only host, user, and port for use as a Connection Override.
+---
+
+# function: connection
+
+Returns a JSON object with exactly `host`, `user`, and `port`. Use it to build `conn` for a dynamic target while inheriting every other field from the provider Connection Defaults.
+
+The function is deterministic, performs no network access, does not read provider configuration, and never accepts key material. The returned JSON is a valid Connection Override.
+
+```hcl
+resource "ssh_resource" "dynamic" {
+  conn = provider::ssh::connection("example.internal", "deploy", "22")
+
+  file {
+    path    = "/opt/app/marker"
+    content = "managed\n"
+    mode    = "0644"
+  }
+}
+```
+
+## Signature
+
+{{ .FunctionSignatureMarkdown }}
+
+## Arguments
+
+{{ .FunctionArgumentsMarkdown }}

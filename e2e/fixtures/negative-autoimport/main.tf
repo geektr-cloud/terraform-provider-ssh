@@ -33,7 +33,7 @@ variable "path" {
   type = string
 }
 
-data "ssh_conn" "target" {
+provider "ssh" {
   host        = var.host
   port        = var.port
   user        = var.ssh_user
@@ -44,8 +44,6 @@ data "ssh_conn" "target" {
 }
 
 resource "ssh_resource" "adopted" {
-  conn = data.ssh_conn.target.conn
-
   file {
     path        = var.path
     content     = "adopted-content"

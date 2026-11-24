@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,26 +16,14 @@ import (
 
 func newOpsModel(t *testing.T, server *testsupport.Server, commands ...attr.Value) OpsModel {
 	t.Helper()
-	host, port, _ := net.SplitHostPort(server.Addr)
 	return OpsModel{
-		Conn: &ConnectionModel{
-			Type:                  types.StringValue("linux"),
-			Host:                  types.StringValue(host),
-			Port:                  types.StringValue(port),
-			User:                  types.StringValue("tester"),
-			PrivateKey:            types.StringValue(server.PrivateKeyPEM(t)),
-			KnownHosts:            types.StringNull(),
-			HostKey:               types.StringNull(),
-			InsecureIgnoreHostKey: types.BoolValue(true),
-			Envs:                  types.MapValueMust(types.StringType, map[string]attr.Value{}),
-			Timeout:               types.StringValue("5s"),
-			RetryDelay:            types.StringValue("50ms"),
-		},
+		Conn:     types.StringNull(),
 		Sudo:     types.BoolValue(false),
 		Timeout:  types.StringValue("5s"),
 		Files:    types.ListNull(types.ObjectType{AttrTypes: fileOperationAttrTypes()}),
 		Commands: types.ListValueMust(types.ObjectType{AttrTypes: commandOperationAttrTypes()}, commands),
 		Runs:     types.ListNull(types.ObjectType{AttrTypes: runOperationAttrTypes()}),
+		defaults: testServerDefaults(t, server),
 	}
 }
 

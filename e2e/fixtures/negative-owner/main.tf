@@ -37,7 +37,7 @@ variable "bad_owner" {
   type = string
 }
 
-data "ssh_conn" "target" {
+provider "ssh" {
   host        = var.host
   port        = var.port
   user        = var.ssh_user
@@ -50,7 +50,6 @@ data "ssh_conn" "target" {
 # Ownership resolution happens before the target is touched. A missing owner
 # must leave the adopted file's old content and mode intact.
 resource "ssh_resource" "atomic_owner" {
-  conn  = data.ssh_conn.target.conn
   owner = var.bad_owner
 
   file {

@@ -49,7 +49,10 @@ variable "run_token" {
   type = string
 }
 
-data "ssh_conn" "target" {
+# Provider Connection Defaults: consumers below inherit these unless they
+# provide a JSON override.
+provider "ssh" {
+  type        = "linux"
   host        = var.host
   port        = var.port
   user        = var.ssh_user
@@ -61,10 +64,8 @@ data "ssh_conn" "target" {
 }
 
 # The write-only input is produced by an ephemeral resource, so its plaintext
-# never reaches plan or state.
+# never reaches plan or state. No conn override: every field is inherited.
 ephemeral "ssh_data" "writeonly" {
-  conn = data.ssh_conn.target.conn
-
   file {
     key  = "secret"
     path = var.secret_file
@@ -73,7 +74,6 @@ ephemeral "ssh_data" "writeonly" {
 }
 
 data "ssh_data" "inspect" {
-  conn    = data.ssh_conn.target.conn
   timeout = "2m"
 
   file {
@@ -110,11 +110,32 @@ data "ssh_data" "inspect" {
   }
 }
 
+# A partial JSON override: host and user are explicit, everything else inherits.
+data "ssh_data" "override" {
+  conn = jsonencode({
+    host = var.host
+    user = var.ssh_user
+  })
+
+  command {
+    key     = "override"
+    command = ["printf", "%s", "json-override"]
+  }
+}
+
+# Provider function helper: no network, no provider read, no key material.
+data "ssh_data" "function" {
+  conn = provider::ssh::connection(var.host, var.ssh_user, var.port)
+
+  command {
+    key     = "function"
+    command = ["printf", "%s", "function-value"]
+  }
+}
+
 # Results from this surface are marked sensitive and their error details
 # suppress remote stderr. The data source still persists the results in state.
 data "ssh_sensitive_data" "inspect_secret" {
-  conn = data.ssh_conn.target.conn
-
   command {
     key     = "sensitive_seed"
     command = ["cat", var.seed_file]
@@ -132,7 +153,6 @@ data "ssh_sensitive_data" "inspect_secret" {
 # Managed entirely below /root while connecting as the non-root e2e user. Every
 # parent creation, write, chmod, chown, read, and removal needs sudo -n.
 resource "ssh_resource" "root_paths" {
-  conn  = data.ssh_conn.target.conn
   umask = "022"
 
   directory {
@@ -154,9 +174,12 @@ resource "ssh_resource" "root_paths" {
 }
 
 # A second resource under /tmp uses the ordinary non-sudo path and explicit
-# ownership.
+# ownership. It also uses a JSON override while inheriting the private key.
 resource "ssh_resource" "public_paths" {
-  conn  = data.ssh_conn.target.conn
+  conn = jsonencode({
+    user = var.ssh_user
+  })
+
   owner = "e2e"
   group = "e2e"
   umask = "022"
@@ -191,6 +214,14 @@ output "padded_value" {
 
 output "keep_newline_value" {
   value = data.ssh_data.inspect.values["keep_newline"]
+}
+
+output "override_value" {
+  value = data.ssh_data.override.values["override"]
+}
+
+output "function_value" {
+  value = data.ssh_data.function.values["function"]
 }
 
 output "sensitive_seed_value" {

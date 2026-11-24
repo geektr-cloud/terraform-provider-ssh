@@ -103,12 +103,13 @@ func TestOpsValidationRejectsDuplicateKeys(t *testing.T) {
 		}),
 	})
 	model := OpsModel{
-		Conn:     testConnModel(),
+		Conn:     types.StringNull(),
 		Sudo:     types.BoolValue(false),
 		Timeout:  types.StringValue("5m"),
 		Files:    files,
 		Commands: commands,
 		Runs:     types.ListNull(types.ObjectType{AttrTypes: runOperationAttrTypes()}),
+		defaults: testStaticDefaults(),
 	}
 	_, _, diags := model.Validate(ctx)
 	if !diags.HasError() {
@@ -129,12 +130,13 @@ func TestOpsValidationRejectsEmptyCommand(t *testing.T) {
 		}),
 	})
 	model := OpsModel{
-		Conn:     testConnModel(),
+		Conn:     types.StringNull(),
 		Sudo:     types.BoolValue(false),
 		Timeout:  types.StringValue("5m"),
 		Files:    types.ListNull(types.ObjectType{AttrTypes: fileOperationAttrTypes()}),
 		Commands: commands,
 		Runs:     types.ListNull(types.ObjectType{AttrTypes: runOperationAttrTypes()}),
+		defaults: testStaticDefaults(),
 	}
 	_, _, diags := model.Validate(ctx)
 	if !diags.HasError() {
@@ -142,51 +144,40 @@ func TestOpsValidationRejectsEmptyCommand(t *testing.T) {
 	}
 }
 
-func TestToClientConfigDefaultsAndUnknown(t *testing.T) {
-	ctx := context.Background()
-	m := testConnModel()
-	cfg, diags := toClientConfig(ctx, m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
+func TestResolveConnectionDefaults(t *testing.T) {
+	provider := Profile{PrivateKey: stringValue("dummy")}
+	override, err := parseConnOverride(`{"host":"127.0.0.1","user":"tester"}`)
+	if err != nil {
+		t.Fatalf("override: %v", err)
+	}
+	cfg, err := resolveConnection(provider, override)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
 	if cfg.Port != "22" || cfg.Timeout.String() != "5m0s" || cfg.RetryDelay.String() != "5s" {
 		t.Fatalf("defaults = %+v", cfg)
 	}
-	if !cfg.InsecureIgnoreHostKey {
-		t.Fatal("explicit insecure mode was not preserved")
+	if cfg.KnownHosts != builtinKnownHosts || cfg.InsecureIgnoreHostKey || cfg.HostKey != "" {
+		t.Fatalf("host key mode = %+v", cfg.Endpoint)
 	}
 
-	m.Host = types.StringUnknown()
-	if _, diags := toClientConfig(ctx, m); !diags.HasError() {
-		t.Fatal("expected unknown host diagnostic")
+	unknown := types.StringUnknown()
+	if _, err := resolveConnConfig(provider, unknown); err == nil {
+		t.Fatal("expected unknown conn error")
 	}
 }
 
-func TestToClientConfigDefaultsNullPorts(t *testing.T) {
-	ctx := context.Background()
-	m := testConnModel()
-	m.Port = types.StringNull()
-	cfg, diags := toClientConfig(ctx, m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
+func TestResolveConnectionJumpPortDefault(t *testing.T) {
+	override, err := parseConnOverride(`{
+		"host":"target","user":"tester","private_key":"k",
+		"jump":{"host":"jump.example","user":"jumpuser","private_key":"jk","insecure_ignore_host_key":true}
+	}`)
+	if err != nil {
+		t.Fatalf("override: %v", err)
 	}
-	if cfg.Port != client.DefaultPort {
-		t.Fatalf("target port = %q", cfg.Port)
-	}
-
-	m = testConnModel()
-	m.Jump = &JumpModel{
-		Host:                  types.StringValue("jump.example"),
-		Port:                  types.StringNull(),
-		User:                  types.StringValue("jumpuser"),
-		PrivateKey:            types.StringValue("dummy"),
-		KnownHosts:            types.StringNull(),
-		HostKey:               types.StringNull(),
-		InsecureIgnoreHostKey: types.BoolValue(true),
-	}
-	cfg, diags = toClientConfig(ctx, m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
+	cfg, err := resolveConnection(Profile{}, override)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
 	if cfg.Jump == nil || cfg.Jump.Port != client.DefaultPort {
 		t.Fatalf("jump = %+v", cfg.Jump)
@@ -213,18 +204,14 @@ func TestDurationFromRejectsUnknown(t *testing.T) {
 	}
 }
 
-func testConnModel() *ConnectionModel {
-	return &ConnectionModel{
-		Type:                  types.StringValue("linux"),
-		Host:                  types.StringValue("127.0.0.1"),
-		Port:                  types.StringValue("22"),
-		User:                  types.StringValue("tester"),
-		PrivateKey:            types.StringValue("dummy"),
-		KnownHosts:            types.StringNull(),
-		HostKey:               types.StringNull(),
-		InsecureIgnoreHostKey: types.BoolValue(true),
-		Envs:                  types.MapValueMust(types.StringType, map[string]attr.Value{}),
-		Timeout:               types.StringValue("5m"),
-		RetryDelay:            types.StringValue("5s"),
-	}
+// testStaticDefaults is a complete provider profile for configuration-only
+// tests. No network connection is attempted by these tests.
+func testStaticDefaults() *providerDefaults {
+	return &providerDefaults{profile: Profile{
+		Host:                  stringValue("127.0.0.1"),
+		Port:                  stringValue("22"),
+		User:                  stringValue("tester"),
+		PrivateKey:            stringValue("dummy"),
+		InsecureIgnoreHostKey: boolValue(true),
+	}}
 }

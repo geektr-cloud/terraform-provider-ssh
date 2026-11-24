@@ -1,4 +1,4 @@
-data "ssh_conn" "server" {
+provider "ssh" {
   host        = "example.internal"
   user        = "deploy"
   private_key = file("~/.ssh/id_ed25519")
@@ -6,7 +6,11 @@ data "ssh_conn" "server" {
 }
 
 data "ssh_data" "inspect" {
-  conn = data.ssh_conn.server.conn
+  # Omitting conn inherits every provider default. A JSON override can change
+  # only the fields that differ for this consumer.
+  conn = jsonencode({
+    user = "auditor"
+  })
 
   file {
     key  = "config"

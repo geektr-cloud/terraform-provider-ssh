@@ -1,4 +1,4 @@
-data "ssh_conn" "server" {
+provider "ssh" {
   host        = "example.internal"
   port        = "22"
   user        = "deploy"
@@ -7,7 +7,11 @@ data "ssh_conn" "server" {
 }
 
 resource "ssh_resource" "app" {
-  conn = data.ssh_conn.server.conn
+  # Optional JSON override. It may supply only the fields that differ from the
+  # provider defaults, or a complete profile with its own private_key.
+  conn = jsonencode({
+    user = "deploy"
+  })
 
   directory {
     path = "/opt/app"
@@ -17,6 +21,18 @@ resource "ssh_resource" "app" {
   file {
     path    = "/opt/app/config.yaml"
     content = "listen: 0.0.0.0:8080\n"
+    mode    = "0644"
+  }
+}
+
+resource "ssh_resource" "dynamic" {
+  # Deterministic helper for a dynamic target: no network, no provider read,
+  # no key material. Remaining fields inherit the provider defaults.
+  conn = provider::ssh::connection("other.internal", "deploy", "22")
+
+  file {
+    path    = "/opt/app/marker"
+    content = "managed\n"
     mode    = "0644"
   }
 }

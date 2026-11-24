@@ -34,17 +34,7 @@ variable "path" {
 }
 
 # An existing unmanaged file must be rejected unless auto_import is set.
-resource "ssh_resource" "rejected" {
-  conn = data.ssh_conn.target.conn
-
-  file {
-    path    = var.path
-    content = "replacement-content"
-    mode    = "0644"
-  }
-}
-
-data "ssh_conn" "target" {
+provider "ssh" {
   host        = var.host
   port        = var.port
   user        = var.ssh_user
@@ -52,4 +42,12 @@ data "ssh_conn" "target" {
   known_hosts = var.known_hosts
   timeout     = "2m"
   retry_delay = "1s"
+}
+
+resource "ssh_resource" "rejected" {
+  file {
+    path    = var.path
+    content = "replacement-content"
+    mode    = "0644"
+  }
 }

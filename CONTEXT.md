@@ -57,18 +57,30 @@ _Avoid_: encrypted content, plaintext content state
 _Avoid_: shell string, joined arguments
 
 **Script Run**:
-写入远端临时文件、由指定 shell 执行并在结束后清理的脚本操作。
-_Avoid_: command argv, inline shell concatenation
+由指定 shell 通过标准输入接收并执行的脚本操作；不创建远端临时脚本文件，也不把脚本正文放入远端进程参数。
+_Avoid_: command argv, inline shell concatenation, temporary remote script
 
 ### Privilege and identity
 
 **Connection Profile**:
-`data.ssh_conn` 的敏感 `conn` 输出，包含独立建立 SSH 连接所需的完整配置与私钥；普通消费者会持久化它，并据此在每次生命周期操作中自行重连。
+独立建立 SSH 连接所需的完整配置，包括目标身份、认证、主机校验、跳板与超时；它不包含 live connection handle，各生命周期操作据此独立重连。
 _Avoid_: connection UUID, live connection handle, process-global connection
 
-**Connection Probe**:
-`data.ssh_conn` 返回 Connection Profile 前完成的真实 SSH 连接检查；失败会阻止依赖它的消费者并行发起连接。
-_Avoid_: credential-only data source, persistent connection pool
+**Layered Connection Profile**:
+由 Provider Connection Defaults 与消费者的 Connection Override 合并形成的 Connection Profile；覆盖只作用于本次消费者，不修改其他消费者的默认配置。
+_Avoid_: provider-only connection, duplicated full profile
+
+**Provider Connection Defaults**:
+provider 持有的部分或完整 Connection Profile，供未覆盖对应字段的消费者共享；凭据默认值不属于资源持久身份。
+_Avoid_: global live connection, resource-stored provider credential
+
+**Connection Override**:
+消费者针对一次连接提供的部分 Connection Profile；未出现的字段继承 Provider Connection Defaults，显式空值清除对应默认值并回到内置默认行为。
+_Avoid_: replacement profile, implicit reset
+
+**Connection Identity**:
+标识目标 SSH 端点的非敏感部分，包括目标 host/port/user 与 Jump Host 的 host/port/user；它决定资源是否指向同一远端，不包含私钥、host-key 配置、环境变量或超时。
+_Avoid_: credential fingerprint, full connection profile
 
 **Jump Host**:
 Connection Profile 中用于到达目标主机的单层 SSH 跳板；它不是 SOCKS5/HTTP proxy，且自身不能再包含 Jump Host。
@@ -79,7 +91,7 @@ _Avoid_: proxy, recursive jump chain
 _Avoid_: arbitrary Linux, POSIX-compatible host
 
 **Inline Private Key Authentication**:
-仅使用配置中的私钥内容进行 SSH 认证；普通 resource/data surface 会持久化该私钥，ephemeral surface 不持久化。
+仅使用配置中的私钥内容进行 SSH 认证；Provider Connection Defaults 中的私钥不进入资源持久身份，普通消费者在 Connection Override 中显式提供的私钥仍会随该覆盖配置持久化。
 _Avoid_: private key path, agent authentication, password authentication
 
 **Smart Escalation**:

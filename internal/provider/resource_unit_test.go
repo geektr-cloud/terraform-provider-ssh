@@ -14,20 +14,16 @@ import (
 
 func resourceModelForTest(t *testing.T, dirs []attr.Value, files []attr.Value) sshResourceModel {
 	t.Helper()
-	ctx := context.Background()
-	conn, diags := connObjectValue(ctx, testConnModel())
-	if diags.HasError() {
-		t.Fatalf("conn object: %v", diags)
-	}
 	return sshResourceModel{
-		Conn:        conn,
-		Umask:       types.StringValue("022"),
-		Owner:       types.StringNull(),
-		UID:         types.Int64Null(),
-		Group:       types.StringNull(),
-		GID:         types.Int64Null(),
-		Directories: types.ListValueMust(types.ObjectType{AttrTypes: directoryAttrTypes()}, dirs),
-		Files:       types.ListValueMust(types.ObjectType{AttrTypes: fileAttrTypes()}, files),
+		Conn:               types.StringNull(),
+		ConnectionIdentity: types.StringNull(),
+		Umask:              types.StringValue("022"),
+		Owner:              types.StringNull(),
+		UID:                types.Int64Null(),
+		Group:              types.StringNull(),
+		GID:                types.Int64Null(),
+		Directories:        types.ListValueMust(types.ObjectType{AttrTypes: directoryAttrTypes()}, dirs),
+		Files:              types.ListValueMust(types.ObjectType{AttrTypes: fileAttrTypes()}, files),
 	}
 }
 
@@ -106,7 +102,7 @@ func TestValidateResourceModel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			model := resourceModelForTest(t, tc.dirs, tc.files)
-			if diags := validateResourceModel(ctx, &model, false); !diags.HasError() {
+			if diags := validateResourceModel(ctx, &model, testStaticDefaults(), false); !diags.HasError() {
 				t.Fatal("expected validation error")
 			}
 		})
@@ -119,7 +115,7 @@ func TestValidateResourceModelValid(t *testing.T) {
 		[]attr.Value{directoryObject("/tmp/x", "0755", types.StringNull(), types.Int64Null())},
 		[]attr.Value{fileObject("/tmp/x/a", "content", "")},
 	)
-	if diags := validateResourceModel(ctx, &model, false); diags.HasError() {
+	if diags := validateResourceModel(ctx, &model, testStaticDefaults(), false); diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
 }
@@ -265,54 +261,6 @@ func TestBuildDesiredRejectsUnstableWriteOnly(t *testing.T) {
 	}
 	if len(entries) != 1 || string(entries[0].content) != "stable" {
 		t.Fatalf("entries = %#v", entries)
-	}
-}
-
-func TestConnectionIdentityUnknown(t *testing.T) {
-	unknown := testConnModel()
-	unknown.Host = types.StringUnknown()
-	obj, diags := connObjectValue(context.Background(), unknown)
-	if diags.HasError() {
-		t.Fatalf("conn object: %v", diags)
-	}
-	if !connectionIdentityUnknown(obj) {
-		t.Fatal("unknown host must be reported as unknown identity")
-	}
-	if connectionIdentityChanged(unknown, testConnModel()) {
-		t.Fatal("unknown identity must not require replacement")
-	}
-
-	jumpUnknown := testConnModel()
-	jumpUnknown.Jump = nil
-	obj, diags = connObjectValue(context.Background(), jumpUnknown)
-	if diags.HasError() {
-		t.Fatalf("conn object: %v", diags)
-	}
-	attrs := obj.Attributes()
-	attrs["jump"] = types.ObjectUnknown(jumpAttrTypes())
-	jumpObj, d := types.ObjectValue(connectionAttrTypes(), attrs)
-	if d.HasError() {
-		t.Fatalf("jump object: %v", d)
-	}
-	if !connectionIdentityUnknown(jumpObj) {
-		t.Fatal("unknown jump object must be reported as unknown identity")
-	}
-
-	unknownJumpField := testConnModel()
-	unknownJumpField.Jump = &JumpModel{
-		Host:       types.StringUnknown(),
-		Port:       types.StringValue("22"),
-		User:       types.StringValue("u"),
-		PrivateKey: types.StringValue("k"),
-		KnownHosts: types.StringNull(),
-		HostKey:    types.StringNull(),
-	}
-	obj, diags = connObjectValue(context.Background(), unknownJumpField)
-	if diags.HasError() {
-		t.Fatalf("conn object: %v", diags)
-	}
-	if !connectionIdentityUnknown(obj) {
-		t.Fatal("unknown jump identity field must be reported as unknown")
 	}
 }
 
@@ -478,7 +426,7 @@ func TestApplyValidationRejectsUnknownBlockFields(t *testing.T) {
 				files = []attr.Value{tc.file}
 			}
 			model := resourceModelForTest(t, dirs, files)
-			if diags := validateResourceModel(ctx, &model, true); !diags.HasError() {
+			if diags := validateResourceModel(ctx, &model, testStaticDefaults(), true); !diags.HasError() {
 				t.Fatal("expected apply validation error")
 			}
 		})
@@ -507,7 +455,7 @@ func TestPlanValidationSkipsUnknownContent(t *testing.T) {
 				"content_sha256": types.StringNull(),
 			})
 			model := resourceModelForTest(t, nil, []attr.Value{file})
-			if diags := validateResourceModel(ctx, &model, false); diags.HasError() {
+			if diags := validateResourceModel(ctx, &model, testStaticDefaults(), false); diags.HasError() {
 				t.Fatalf("plan validation must skip unknown content: %v", diags)
 			}
 		})
@@ -525,33 +473,52 @@ func TestOmittedBlockOwnershipInheritsAtApply(t *testing.T) {
 		}),
 	}, nil)
 	model.Owner = types.StringValue("root")
-	if diags := validateResourceModel(ctx, &model, true); diags.HasError() {
+	if diags := validateResourceModel(ctx, &model, testStaticDefaults(), true); diags.HasError() {
 		t.Fatalf("omitted ownership must inherit: %v", diags)
 	}
 }
 
 func TestConnectionIdentityChanged(t *testing.T) {
-	base := testConnModel()
-	if connectionIdentityChanged(base, base) {
-		t.Fatal("identical profiles must not replace")
+	base := Profile{
+		Host:                  stringValue("127.0.0.1"),
+		Port:                  stringValue("22"),
+		User:                  stringValue("tester"),
+		PrivateKey:            stringValue("dummy"),
+		InsecureIgnoreHostKey: boolValue(true),
 	}
-	changed := *base
-	changed.Port = types.StringValue("2222")
-	if !connectionIdentityChanged(base, &changed) {
-		t.Fatal("port change must replace")
+	first, known, err := resolveIdentity(base, Profile{})
+	if err != nil || !known {
+		t.Fatalf("identity: %q %v %v", first, known, err)
 	}
-	keyOnly := *base
-	keyOnly.PrivateKey = types.StringValue("different")
-	if connectionIdentityChanged(base, &keyOnly) {
-		t.Fatal("private key change must not replace")
+	again, known, err := resolveIdentity(base, Profile{})
+	if err != nil || !known || again != first {
+		t.Fatalf("identity must be deterministic: %q %q %v %v", first, again, known, err)
 	}
-	jump := *base
-	jump.Jump = &JumpModel{
-		Host: types.StringValue("jump"), Port: types.StringValue("22"), User: types.StringValue("u"),
-		PrivateKey: types.StringValue("k"), KnownHosts: types.StringNull(), HostKey: types.StringNull(),
-		InsecureIgnoreHostKey: types.BoolValue(true),
+	changed := base
+	changed.Port = stringValue("2222")
+	second, _, _ := resolveIdentity(changed, Profile{})
+	if second == first {
+		t.Fatal("port change must change identity")
 	}
-	if !connectionIdentityChanged(base, &jump) {
-		t.Fatal("adding a jump host must replace")
+	keyOnly := base
+	keyOnly.PrivateKey = stringValue("different")
+	unchanged, _, _ := resolveIdentity(keyOnly, Profile{})
+	if unchanged != first {
+		t.Fatal("private key change must not change identity")
+	}
+	withJump := base
+	withJump.Jump = jumpField{Set: true, Value: JumpProfile{
+		Host: stringValue("jump"), User: stringValue("u"), PrivateKey: stringValue("k"),
+	}}
+	jumped, _, _ := resolveIdentity(withJump, Profile{})
+	if jumped == first {
+		t.Fatal("adding a jump host must change identity")
+	}
+
+	if _, known, err := resolveIdentity(Profile{}, Profile{}); err != nil || known {
+		t.Fatal("an incomplete identity must not be reported as known")
+	}
+	if _, known, err := resolveConnIdentity(base, types.StringUnknown()); err != nil || known {
+		t.Fatal("an unknown conn value must not produce an identity")
 	}
 }

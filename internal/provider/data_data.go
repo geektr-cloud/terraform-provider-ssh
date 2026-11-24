@@ -9,16 +9,22 @@ import (
 )
 
 var (
-	_ datasource.DataSource = (*sshDataDataSource)(nil)
-	_ datasource.DataSource = (*sshSensitiveDataDataSource)(nil)
+	_ datasource.DataSource              = (*sshDataDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*sshDataDataSource)(nil)
+	_ datasource.DataSource              = (*sshSensitiveDataDataSource)(nil)
+	_ datasource.DataSourceWithConfigure = (*sshSensitiveDataDataSource)(nil)
 )
 
 // sshDataDataSource exposes results that are not marked sensitive.
-type sshDataDataSource struct{}
+type sshDataDataSource struct {
+	defaults *providerDefaults
+}
 
 // sshSensitiveDataDataSource marks the whole result map sensitive and
 // suppresses remote stderr in diagnostics.
-type sshSensitiveDataDataSource struct{}
+type sshSensitiveDataDataSource struct {
+	defaults *providerDefaults
+}
 
 func (d *sshDataDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_data"
@@ -34,11 +40,10 @@ func dataOpsAttributes(valuesSensitive bool) map[string]schema.Attribute {
 		valuesDescription = "Results keyed by operation key. Marked sensitive, but still persisted by this data source: Sensitive is display redaction, not encryption."
 	}
 	return map[string]schema.Attribute{
-		"conn": schema.SingleNestedAttribute{
-			Required:    true,
+		"conn": schema.StringAttribute{
+			Optional:    true,
 			Sensitive:   true,
-			Description: "Connection Profile used to establish a fresh connection for this read.",
-			Attributes:  connDataSourceProfileAttributes(),
+			Description: "Optional JSON Connection Override. Omit, null, or `{}` to use the provider defaults unchanged. A private key written here is persisted by this data source.",
 		},
 		"sudo": schema.BoolAttribute{
 			Optional:    true,
@@ -128,20 +133,52 @@ func (d *sshSensitiveDataDataSource) Schema(_ context.Context, _ datasource.Sche
 }
 
 func (d *sshDataDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	readOpsData(ctx, req, resp, false)
+	readOpsData(ctx, d.defaults, req, resp, false)
 }
 
 func (d *sshSensitiveDataDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	readOpsData(ctx, req, resp, true)
+	readOpsData(ctx, d.defaults, req, resp, true)
 }
 
-func readOpsData(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse, sensitive bool) {
+// Configure receives the provider-level Connection Defaults.
+func (d *sshDataDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	defaults, ok := providerDefaultsFromData(req.ProviderData)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data", "The SSH provider received an unexpected provider data type.")
+		return
+	}
+	if defaults != nil {
+		d.defaults = defaults
+	}
+}
+
+func (d *sshSensitiveDataDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	defaults, ok := providerDefaultsFromData(req.ProviderData)
+	if !ok {
+		resp.Diagnostics.AddError("Unexpected provider data", "The SSH provider received an unexpected provider data type.")
+		return
+	}
+	if defaults != nil {
+		d.defaults = defaults
+	}
+}
+
+func providerDefaultsFromData(data any) (*providerDefaults, bool) {
+	if data == nil {
+		return nil, true
+	}
+	defaults, ok := data.(*providerDefaults)
+	return defaults, ok
+}
+
+func readOpsData(ctx context.Context, defaults *providerDefaults, req datasource.ReadRequest, resp *datasource.ReadResponse, sensitive bool) {
 	var model OpsModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &model)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	model.defaults = defaults
 	values, diags := model.Execute(ctx, sensitive)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
